@@ -30,6 +30,10 @@ const client = axios.create({
 client.interceptors.request.use((config) => {
   const token = config._staff ? getStaffToken() : getAccessToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // Let axios automatically handle FormData Content-Type with boundaries
+  if (config.data instanceof FormData) {
+    delete config.headers["Content-Type"];
+  }
   return config;
 });
 
