@@ -23,14 +23,18 @@ export function storeToken(token) {
 }
 
 export async function httpRequestJson(url, options = {}) {
+  const { skipAuth = false, ...fetchOptions } = options;
   const token = readToken();
-  const headers = { ...(options.headers ?? {}) };
+  const headers = { ...(fetchOptions.headers ?? {}) };
 
-  if (token) {
+  if (token && !skipAuth) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${url}`, { ...options, headers });
+  const response = await fetch(`${API_BASE}${url}`, {
+    ...fetchOptions,
+    headers,
+  });
   const payload = await response.json();
 
   // A rejected/expired token: drop it so the app falls back to the login screen.
