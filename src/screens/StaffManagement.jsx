@@ -27,7 +27,6 @@ export default function StaffManagement() {
 
   const [form, setForm]       = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
-  const [adding, setAdding]   = useState(false);
 
   function handleChange(e) {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -37,14 +36,16 @@ export default function StaffManagement() {
     e.preventDefault();
     setFormError("");
     if (form.pin.length < 4) {
-      setFormError("PIN kam se kam 4 digits ka hona chahiye");
+      setFormError("PIN must be at least 4 digits");
       return;
     }
     try {
+      const prefix = form.role === "chef" ? "C" : "W";
+      const fullPin = prefix + form.pin;
       await createMutation.mutateAsync({
         name:  form.name,
         role:  form.role,
-        pin:   form.pin,
+        pin:   fullPin,
         email: form.email || undefined,
       });
       setForm(EMPTY_FORM);
@@ -63,7 +64,7 @@ export default function StaffManagement() {
   }
 
   async function handleRemove(staffId) {
-    if (!window.confirm("Is staff member ko remove karna chahte ho?")) return;
+    if (!window.confirm("Are you sure you want to remove this staff member?")) return;
     try {
       await removeMutation.mutateAsync(staffId);
     } catch { /* silent */ }
@@ -77,7 +78,7 @@ export default function StaffManagement() {
       <div>
         <h1 className="text-2xl font-bold">Staff Management</h1>
         <p className="text-sm text-muted-foreground">
-          Chef aur Waiter add karo. Login ke liye Restaurant ID + PIN chahiye.
+          Add chefs and waiters. Staff members need Restaurant ID + PIN to login.
         </p>
       </div>
 
@@ -91,7 +92,7 @@ export default function StaffManagement() {
         <CardContent>
           <form onSubmit={handleAdd} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Naam *</label>
+              <label className="text-sm font-medium">Name *</label>
               <input
                 name="name"
                 value={form.name}
@@ -111,26 +112,31 @@ export default function StaffManagement() {
                 className="rounded-xl border border-border px-3 py-2 text-sm outline-none focus:border-primary"
               >
                 <option value="waiter">Waiter</option>
-                <option value="chef">Chef (Kitchen)</option>
+                <option value="chef">Chef</option>
               </select>
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">PIN * (4–8 digits)</label>
-              <input
-                name="pin"
-                value={form.pin}
-                onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    pin: e.target.value.replace(/\D/g, "").slice(0, 8),
-                  }))
-                }
-                placeholder="1234"
-                inputMode="numeric"
-                required
-                className="rounded-xl border border-border px-3 py-2 text-sm outline-none focus:border-primary tracking-widest"
-              />
+              <label className="text-sm font-medium">PIN *</label>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted-foreground">
+                  {form.role === "chef" ? "C" : "W"}
+                </span>
+                <input
+                  name="pin"
+                  value={form.pin}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      pin: e.target.value.replace(/\D/g, "").slice(0, 8),
+                    }))
+                  }
+                  placeholder="1234"
+                  inputMode="numeric"
+                  required
+                  className="rounded-xl border border-border pl-7 pr-3 py-2 text-sm outline-none focus:border-primary tracking-widest"
+                />
+              </div>
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -153,21 +159,12 @@ export default function StaffManagement() {
 
             <div className="col-span-full">
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? "Adding…" : "Staff Add Karo"}
+                {createMutation.isPending ? "Adding…" : "Add Staff"}
               </Button>
             </div>
           </form>
         </CardContent>
       </Card>
-
-      {/* Staff Login Info */}
-      <div className="rounded-xl border border-border bg-muted/40 px-5 py-4 text-sm">
-        <p className="font-semibold">Staff Login kaise kare?</p>
-        <p className="mt-1 text-muted-foreground">
-          URL: <span className="font-mono font-medium">/staff/login</span> &nbsp;→&nbsp;
-          Restaurant ID: <span className="font-mono font-medium select-all">{restaurantId ?? "—"}</span> &nbsp;+&nbsp; uska PIN
-        </p>
-      </div>
 
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -183,7 +180,7 @@ export default function StaffManagement() {
               <ChefHat className="h-4 w-4" /> Chefs ({chefs.length})
             </h2>
             {chefs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Koi chef nahi hai abhi.</p>
+              <p className="text-sm text-muted-foreground">No chefs yet.</p>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {chefs.map((s) => (
@@ -206,7 +203,7 @@ export default function StaffManagement() {
               <UtensilsCrossed className="h-4 w-4" /> Waiters ({waiters.length})
             </h2>
             {waiters.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Koi waiter nahi hai abhi.</p>
+              <p className="text-sm text-muted-foreground">No waiters yet.</p>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {waiters.map((s) => (

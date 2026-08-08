@@ -4,7 +4,6 @@ import {
   LogOut,
   QrCode,
   ReceiptText,
-  XCircle,
   UtensilsCrossed,
   PlusCircle,
   BadgePercent,
@@ -34,7 +33,6 @@ const NAV_SECTIONS = [
     title: "Orders Management",
     items: [
       { to: "/orders", label: "Manage Orders", icon: ReceiptText },
-      { to: "/cancellations", label: "Cancellations", icon: XCircle },
     ],
   },
   {

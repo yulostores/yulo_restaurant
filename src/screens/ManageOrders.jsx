@@ -25,7 +25,7 @@ const FILTERS = [
   { value: "ready", label: "Ready To Serve" },
   { value: "bill_generated", label: "Bill Generated" },
   { value: "completed", label: "Completed" },
-  { value: "cancelled", label: "Cancelled" },
+  { value: "cancelled", label: "Cancellations" },
 ];
 
 function statusVariant(status) {
@@ -84,6 +84,73 @@ function BatchStatusLabel({ index, total, orderStatus }) {
     <span className="text-xs font-semibold text-brand-green">Prepared</span>
   ) : (
     <span className="text-xs font-semibold text-brand-orange">• Preparing</span>
+  );
+}
+
+function OrdersSection({ title, orders, onSelectOrder }) {
+  return (
+    <div className="space-y-3">
+      {title && <h2 className="text-lg font-bold">{title}</h2>}
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-brand-cream/60">
+                <TableHead className="pl-6">Order</TableHead>
+                <TableHead>Table</TableHead>
+                <TableHead>Items</TableHead>
+                <TableHead>Total</TableHead>
+                <TableHead>Time</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Payment</TableHead>
+                <TableHead className="pr-6 text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {orders.map((order) => (
+                <TableRow key={order._id ?? order.id}>
+                  <TableCell className="pl-6 font-semibold">
+                    #{order._id ?? order.id.slice(-6)}
+                  </TableCell>
+                  <TableCell>{order.tableNumber}</TableCell>
+                  <TableCell className="max-w-[260px] text-muted-foreground">
+                    {order.items.map((i) => `${i.quantity}× ${i.title}`).join(", ")}
+                  </TableCell>
+                  <TableCell className="font-semibold">{formatPrice(orderTotal(order))}</TableCell>
+                  <TableCell className="text-muted-foreground">{new Date(order.time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</TableCell>
+                  <TableCell>
+                    <Badge variant={statusVariant(order.orderStatus)} className="capitalize">
+                      {order.orderStatus}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={order.paymentStatus === "paid" ? "ok" : "muted"} className="capitalize">
+                      {order.paymentStatus}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="pr-6 text-right">
+                    <Button
+                      size="sm"
+                      onClick={() => onSelectOrder(order)}
+                      className="rounded-full border-0 bg-[#FDEEE8] text-brand-maroon hover:bg-brand-maroon/15 hover:text-brand-maroon focus-visible:ring-0"
+                    >
+                      View Details
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {orders.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                    No {title ? title.toLowerCase() : "orders"} in this category.
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -329,65 +396,14 @@ export default function ManageOrders() {
         ))}
       </div>
 
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-brand-cream/60">
-                <TableHead className="pl-6">Order</TableHead>
-                <TableHead>Table</TableHead>
-                <TableHead>Items</TableHead>
-                <TableHead>Total</TableHead>
-                <TableHead>Time</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Payment</TableHead>
-                <TableHead className="pr-6 text-right">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visible.map((order) => (
-                <TableRow key={order._id ?? order.id}>
-                  <TableCell className="pl-6 font-semibold">
-                    #{order._id ?? order.id.slice(-6)}
-                  </TableCell>
-                  <TableCell>{order.tableNumber}</TableCell>
-                  <TableCell className="max-w-[260px] text-muted-foreground">
-                    {order.items.map((i) => `${i.quantity}× ${i.title}`).join(", ")}
-                  </TableCell>
-                  <TableCell className="font-semibold">{formatPrice(orderTotal(order))}</TableCell>
-                  <TableCell className="text-muted-foreground">{formatTime(order.time)}</TableCell>
-                  <TableCell>
-                    <Badge variant={statusVariant(order.orderStatus)} className="capitalize">
-                      {order.orderStatus}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={order.paymentStatus === "paid" ? "ok" : "muted"} className="capitalize">
-                      {order.paymentStatus}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="pr-6 text-right">
-                    <Button
-                      size="sm"
-                      onClick={() => setSelectedOrder(order)}
-                      className="rounded-full border-0 bg-[#FDEEE8] text-brand-maroon hover:bg-brand-maroon/15 hover:text-brand-maroon focus-visible:ring-0"
-                    >
-                      View Details
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {visible.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
-                    No orders in this view.
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      {filter === "cancelled" ? (
+        <>
+          <OrdersSection title="Dine-In Cancelled Orders" orders={visible.filter((o) => (o.orderType ?? "Dine-In") === "Dine-In")} onSelectOrder={setSelectedOrder} />
+          <OrdersSection title="Online Cancelled Orders" orders={visible.filter((o) => o.orderType === "Online")} onSelectOrder={setSelectedOrder} />
+        </>
+      ) : (
+        <OrdersSection orders={visible} onSelectOrder={setSelectedOrder} />
+      )}
 
       {selectedOrder && (
         <OrderDrawer

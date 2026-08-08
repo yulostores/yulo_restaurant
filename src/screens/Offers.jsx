@@ -126,6 +126,7 @@ export default function Offers() {
   const publishMutation = usePublishDiscount(restaurantId);
 
   const [form, setForm]               = useState(EMPTY);
+  const [imageFile, setImageFile]     = useState(null);
   const [drafts, setDrafts]           = useState([]);
   const [search, setSearch]           = useState("");
   const [error, setError]             = useState("");
@@ -195,8 +196,17 @@ export default function Offers() {
     if (!form.validFrom || !form.validTo) { setError("Start date and end date are required"); return; }
     setError("");
     try {
-      await createMutation.mutateAsync(toPayload(form));
+      const payload = toPayload(form);
+      if (imageFile) {
+        const formData = new FormData();
+        Object.keys(payload).forEach((k) => formData.append(k, payload[k]));
+        formData.append("image", imageFile);
+        await createMutation.mutateAsync(formData);
+      } else {
+        await createMutation.mutateAsync(payload);
+      }
       setForm(EMPTY);
+      setImageFile(null);
     } catch (err) {
       setError(err.response?.data?.message ?? err.message);
     }
@@ -430,10 +440,21 @@ export default function Offers() {
 
               <div className="space-y-1.5">
                 <Label>Offer Image</Label>
-                <label className="flex h-28 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-center text-muted-foreground hover:border-brand-orange/50">
-                  <ImagePlus className="h-5 w-5" />
-                  <span className="text-sm">Click to upload or drag and drop</span>
-                  <span className="text-xs">PNG, JPG up to 2MB</span>
+                <label className={cn("flex h-28 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 transition text-center", imageFile ? "border-brand-green bg-[#E8F5EC] text-brand-green" : "border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-muted-foreground hover:border-brand-orange/50")}>
+                  {imageFile ? (
+                    <>
+                      <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                      <span className="text-sm font-medium">Image ready</span>
+                      <span className="text-xs text-muted-foreground">{imageFile.name}</span>
+                    </>
+                  ) : (
+                    <>
+                      <ImagePlus className="h-5 w-5" />
+                      <span className="text-sm">Click to upload or drag and drop</span>
+                      <span className="text-xs">PNG, JPG up to 2MB</span>
+                    </>
+                  )}
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
                 </label>
               </div>
 

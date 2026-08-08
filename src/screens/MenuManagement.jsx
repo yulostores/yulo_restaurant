@@ -112,9 +112,15 @@ export default function MenuManagement() {
   const [statusMsg, setStatusMsg]       = useState("");
   const [newCatName, setNewCatName]     = useState("");
   const [showNewCat, setShowNewCat]     = useState(false);
-
-  const ingredients = [];
-  const addons = [];
+  const [ingredients, setIngredients]   = useState([]);
+  const [ingredientForm, setIngredientForm] = useState({
+    name: "", quantity: "0", unit: "gm", cost: "0",
+  });
+  const [addons, setAddons]               = useState([]);
+  const [addonForm, setAddonForm]         = useState({
+    name: "", foodType: "Veg", quantity: "1", unit: "Piece", price: "50",
+  });
+  const [addonImage, setAddonImage]       = useState(null);
 
   async function handleSubmit() {
     setStatusMsg("");
@@ -130,15 +136,54 @@ export default function MenuManagement() {
     formData.append("foodType", item.foodType);
     formData.append("prepTime", item.prepTime);
     if (imageFile) formData.append("image", imageFile);
+    if (ingredients.length > 0) formData.append("ingredients", JSON.stringify(ingredients));
+    if (addons.length > 0) formData.append("addons", JSON.stringify(addons));
     try {
       if (item._id) await updateMutation.mutateAsync({ itemId: item._id, formData });
       else          await createMutation.mutateAsync(formData);
       setStatusMsg(item._id ? "Item updated!" : "Item created!");
       setItem({ name: "", description: "", prepTime: 20, sellingPrice: "", categoryId: "", categoryName: "", foodType: "veg" });
       setImageFile(null);
+      setIngredients([]);
+      setIngredientForm({ name: "", quantity: "0", unit: "gm", cost: "0" });
+      setAddons([]);
+      setAddonForm({ name: "", foodType: "Veg", quantity: "1", unit: "Piece", price: "50" });
+      setAddonImage(null);
     } catch (err) {
       setStatusMsg(err.response?.data?.message ?? err.message);
     }
+  }
+
+  function addIngredient() {
+    if (!ingredientForm.name.trim()) return;
+    setIngredients([...ingredients, { ...ingredientForm, _id: Date.now() }]);
+    setIngredientForm({ name: "", quantity: "0", unit: "gm", cost: "0" });
+  }
+
+  function removeIngredient(id) {
+    setIngredients(ingredients.filter((ing) => ing._id !== id));
+  }
+
+  function cancelIngredient() {
+    setIngredientForm({ name: "", quantity: "0", unit: "gm", cost: "0" });
+  }
+
+  function addAddon() {
+    if (!addonForm.name.trim()) return;
+    const addon = { ...addonForm, _id: Date.now() };
+    if (addonImage) addon.image = addonImage.name;
+    setAddons([...addons, addon]);
+    setAddonForm({ name: "", foodType: "Veg", quantity: "1", unit: "Piece", price: "50" });
+    setAddonImage(null);
+  }
+
+  function removeAddon(id) {
+    setAddons(addons.filter((addon) => addon._id !== id));
+  }
+
+  function cancelAddon() {
+    setAddonForm({ name: "", foodType: "Veg", quantity: "1", unit: "Piece", price: "50" });
+    setAddonImage(null);
   }
 
   if (isLoading) {
@@ -164,13 +209,25 @@ export default function MenuManagement() {
           <h2 className="text-base font-bold">Item Information</h2>
         </CardHeader>
         <CardContent className="space-y-5">
-          <label className="flex h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-center transition hover:border-brand-orange/50">
-            <span className="grid h-12 w-12 place-items-center rounded-full bg-[#FFDAD6]/50 text-brand-orange">
-              <ImagePlus className="h-5 w-5" />
-            </span>
-            <span className="text-sm text-muted-foreground">
-              Upload Food Photo or Drag &amp; Drop
-            </span>
+          <label className={cn("flex h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 transition", imageFile ? "border-brand-green bg-[#E8F5EC]" : "border-dashed border-[#E2DFDE] bg-[#FCFAF7] hover:border-brand-orange/50")}>
+            {imageFile ? (
+              <>
+                <span className="grid h-12 w-12 place-items-center rounded-full bg-brand-green/20 text-brand-green">
+                  <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                </span>
+                <span className="text-sm font-medium text-brand-green">Image uploaded</span>
+                <span className="text-xs text-muted-foreground">{imageFile.name}</span>
+              </>
+            ) : (
+              <>
+                <span className="grid h-12 w-12 place-items-center rounded-full bg-[#FFDAD6]/50 text-brand-orange">
+                  <ImagePlus className="h-5 w-5" />
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  Upload Food Photo or Drag &amp; Drop
+                </span>
+              </>
+            )}
             <input type="file" accept="image/*" className="hidden" onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
           </label>
 
@@ -300,13 +357,13 @@ export default function MenuManagement() {
             </TableHeader>
             <TableBody>
               {ingredients.map((ing) => (
-                <TableRow key={ing.id}>
+                <TableRow key={ing._id}>
                   <TableCell className="font-medium">{ing.name}</TableCell>
                   <TableCell>{ing.quantity}</TableCell>
                   <TableCell className="text-muted-foreground">{ing.unit}</TableCell>
                   <TableCell className="font-semibold">₹{ing.cost}</TableCell>
                   <TableCell>
-                    <button type="button" className="text-muted-foreground hover:text-brand-maroon">
+                    <button type="button" onClick={() => removeIngredient(ing._id)} className="text-muted-foreground hover:text-brand-maroon">
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </TableCell>
@@ -323,15 +380,15 @@ export default function MenuManagement() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-1.5">
                 <Label className="text-xs">Ingredient Name</Label>
-                <Input placeholder="e.g. Basmati Rice" />
+                <Input value={ingredientForm.name} onChange={(e) => setIngredientForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Basmati Rice" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Quantity</Label>
-                <Input defaultValue="0" />
+                <Input value={ingredientForm.quantity} onChange={(e) => setIngredientForm((f) => ({ ...f, quantity: e.target.value }))} />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Unit</Label>
-                <Select defaultValue="gm">
+                <Select value={ingredientForm.unit} onValueChange={(v) => setIngredientForm((f) => ({ ...f, unit: v }))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -345,12 +402,12 @@ export default function MenuManagement() {
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Cost</Label>
-                <RupeeInput defaultValue="0" />
+                <RupeeInput value={ingredientForm.cost} onChange={(e) => setIngredientForm((f) => ({ ...f, cost: e.target.value }))} />
               </div>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline">Cancel</Button>
-              <Button className="bg-brand-orange text-white hover:bg-brand-orange/90">
+              <Button variant="outline" onClick={cancelIngredient}>Cancel</Button>
+              <Button className="bg-brand-orange text-white hover:bg-brand-orange/90" onClick={addIngredient}>
                 Add Ingredient
               </Button>
             </div>
@@ -366,21 +423,17 @@ export default function MenuManagement() {
         <CardContent className="space-y-3">
           {addons.map((addon) => (
             <div
-              key={addon.id}
+              key={addon._id}
               className="flex items-center gap-4 rounded-xl border border-brand-cream/70 px-4 py-3"
             >
-              <Switch defaultChecked={addon.enabled} />
               <div>
                 <p className="text-sm font-semibold">{addon.name}</p>
-                <p className="text-xs text-muted-foreground">{addon.note}</p>
+                <p className="text-xs text-muted-foreground">{addon.quantity} {addon.unit}</p>
               </div>
               <span className="ml-auto text-sm font-semibold text-brand-green">
                 +₹{addon.price}
               </span>
-              <button type="button" className="text-muted-foreground hover:text-brand-orange">
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button type="button" className="text-muted-foreground hover:text-brand-maroon">
+              <button type="button" onClick={() => removeAddon(addon._id)} className="text-muted-foreground hover:text-brand-maroon">
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
@@ -395,12 +448,12 @@ export default function MenuManagement() {
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Name</Label>
-                  <Input placeholder="Enter add-on name" />
+                  <Input value={addonForm.name} onChange={(e) => setAddonForm((f) => ({ ...f, name: e.target.value }))} placeholder="Enter add-on name" />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs">Food Type</Label>
-                    <Select defaultValue="Veg">
+                    <Select value={addonForm.foodType} onValueChange={(v) => setAddonForm((f) => ({ ...f, foodType: v }))}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -412,13 +465,13 @@ export default function MenuManagement() {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs">Quantity</Label>
-                    <Input defaultValue="1" />
+                    <Input value={addonForm.quantity} onChange={(e) => setAddonForm((f) => ({ ...f, quantity: e.target.value }))} />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs">Unit</Label>
-                    <Select defaultValue="Piece">
+                    <Select value={addonForm.unit} onValueChange={(v) => setAddonForm((f) => ({ ...f, unit: v }))}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -431,32 +484,42 @@ export default function MenuManagement() {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs">Pricing</Label>
-                    <RupeeInput defaultValue="50" />
+                    <RupeeInput value={addonForm.price} onChange={(e) => setAddonForm((f) => ({ ...f, price: e.target.value }))} />
                   </div>
                 </div>
               </div>
 
               <div className="space-y-3">
-                <label className="flex h-[104px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-[#E2DFDE] bg-white text-center">
-                  <Upload className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">Upload Item Image</span>
-                  <span className="text-xs text-muted-foreground">PNG, JPG up to 2MB</span>
+                <label className={cn("flex h-[104px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 transition text-center", addonImage ? "border-brand-green bg-[#E8F5EC]" : "border-dashed border-[#E2DFDE] bg-white")}>
+                  {addonImage ? (
+                    <>
+                      <svg className="h-5 w-5 text-brand-green" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                      <span className="text-xs font-medium text-brand-green">{addonImage.name}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-5 w-5 text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">Upload Item Image</span>
+                      <span className="text-xs text-muted-foreground">PNG, JPG up to 2MB</span>
+                    </>
+                  )}
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => setAddonImage(e.target.files?.[0] ?? null)} />
                 </label>
                 <div className="flex items-center gap-3 rounded-xl border border-brand-cream/70 bg-white p-3">
                   <span className="h-10 w-10 shrink-0 rounded-lg bg-gradient-to-br from-brand-saffron to-brand-red" />
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">Item Name</p>
+                    <p className="truncate text-sm font-semibold">{addonForm.name || "Item Name"}</p>
                     <p className="text-xs text-muted-foreground">
-                      <span className="font-semibold text-brand-green">VEG</span> · 1 Serving
+                      <span className="font-semibold text-brand-green">{addonForm.foodType.toUpperCase()}</span> · {addonForm.quantity} {addonForm.unit}
                     </p>
                   </div>
-                  <span className="ml-auto text-sm font-bold text-brand-red">₹50</span>
+                  <span className="ml-auto text-sm font-bold text-brand-red">₹{addonForm.price}</span>
                 </div>
               </div>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline">Cancel</Button>
-              <Button className="bg-brand-orange text-white hover:bg-brand-orange/90">
+              <Button variant="outline" onClick={cancelAddon}>Cancel</Button>
+              <Button className="bg-brand-orange text-white hover:bg-brand-orange/90" onClick={addAddon}>
                 Save Add-on
               </Button>
             </div>
