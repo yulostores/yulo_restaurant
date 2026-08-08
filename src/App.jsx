@@ -3192,7 +3192,7 @@ function CustomerMenuPage() {
       return;
     }
 
-    requestJson(`/api/restaurants/${restaurantId}/menu`)
+    requestJson(`/api/restaurants/${restaurantId}/menu`, { skipAuth: true })
       .then((payload) => {
         setRestaurant(payload.data.restaurant);
         setStatus("Freshly loaded from the restaurant record");
@@ -3239,6 +3239,7 @@ function CustomerMenuPage() {
 
     try {
       const payload = await requestJson("/api/orders", {
+        skipAuth: true,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -3484,6 +3485,7 @@ export default function App() {
         <Route path="/profile" element={<OwnerRoute><Profile /></OwnerRoute>} />
 
         {/* ── Customer QR ordering app (public — OTP guards internally) ── */}
+        <Route path="/menu" element={<CustomerMenuPage />} />
         <Route path="/order/*" element={<CustomerApp />} />
 
         {/* ── Staff portals (protected by role) ────────────────────────── */}

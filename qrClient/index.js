@@ -20,49 +20,65 @@ const selectedQuantities = new Map();
 
 const themes = [
   {
-    bg: "linear-gradient(135deg, #f7f1e8 0%, #efe3d0 50%, #d7c3a7 100%)",
-    surface: "rgba(255, 252, 247, 0.78)",
-    surfaceStrong: "#fffaf2",
-    text: "#2a2118",
-    muted: "#6e5b48",
-    accent: "#b85c38",
-    accentSoft: "rgba(184, 92, 56, 0.12)",
-    border: "rgba(63, 40, 19, 0.1)",
-    shadow: "0 24px 70px rgba(62, 35, 10, 0.15)",
+    bg: "linear-gradient(135deg, #f8fafc 0%, #fff7ed 48%, #ecfdf5 100%)",
+    surface: "rgba(255, 255, 255, 0.92)",
+    surfaceStrong: "#ffffff",
+    text: "#111827",
+    muted: "#64748b",
+    accent: "#e4572e",
+    accentStrong: "#c2410c",
+    accentSoft: "rgba(228, 87, 46, 0.12)",
+    border: "rgba(15, 23, 42, 0.1)",
+    shadow: "0 20px 55px rgba(15, 23, 42, 0.12)",
   },
   {
-    bg: "linear-gradient(135deg, #eef6f2 0%, #d6eadf 55%, #a7ccb9 100%)",
-    surface: "rgba(247, 255, 251, 0.8)",
-    surfaceStrong: "#f9fffb",
+    bg: "linear-gradient(135deg, #f7fee7 0%, #f8fafc 46%, #e0f2fe 100%)",
+    surface: "rgba(255, 255, 255, 0.92)",
+    surfaceStrong: "#ffffff",
     text: "#10241c",
-    muted: "#476457",
-    accent: "#1f7a5c",
-    accentSoft: "rgba(31, 122, 92, 0.14)",
+    muted: "#526579",
+    accent: "#16805f",
+    accentStrong: "#116149",
+    accentSoft: "rgba(22, 128, 95, 0.13)",
     border: "rgba(16, 36, 28, 0.1)",
-    shadow: "0 24px 70px rgba(20, 73, 56, 0.14)",
+    shadow: "0 20px 55px rgba(20, 73, 56, 0.12)",
   },
   {
-    bg: "linear-gradient(135deg, #f4ede7 0%, #ead2be 50%, #cda27e 100%)",
-    surface: "rgba(255, 249, 244, 0.78)",
-    surfaceStrong: "#fffaf5",
+    bg: "linear-gradient(135deg, #fff1f2 0%, #f8fafc 45%, #fef9c3 100%)",
+    surface: "rgba(255, 255, 255, 0.92)",
+    surfaceStrong: "#ffffff",
     text: "#2f1c11",
-    muted: "#76533d",
-    accent: "#c06a2b",
-    accentSoft: "rgba(192, 106, 43, 0.14)",
+    muted: "#6b5f55",
+    accent: "#d85d2a",
+    accentStrong: "#a84316",
+    accentSoft: "rgba(216, 93, 42, 0.13)",
     border: "rgba(47, 28, 17, 0.1)",
-    shadow: "0 24px 70px rgba(101, 52, 19, 0.14)",
+    shadow: "0 20px 55px rgba(101, 52, 19, 0.12)",
   },
   {
-    bg: "linear-gradient(135deg, #f1f2f8 0%, #d9def0 52%, #a9b4da 100%)",
-    surface: "rgba(251, 252, 255, 0.78)",
+    bg: "linear-gradient(135deg, #eef2ff 0%, #f8fafc 46%, #dcfce7 100%)",
+    surface: "rgba(255, 255, 255, 0.92)",
     surfaceStrong: "#ffffff",
     text: "#182033",
-    muted: "#596683",
+    muted: "#5d667a",
     accent: "#3454d1",
+    accentStrong: "#243ea7",
     accentSoft: "rgba(52, 84, 209, 0.12)",
     border: "rgba(24, 32, 51, 0.1)",
-    shadow: "0 24px 70px rgba(37, 59, 141, 0.15)",
+    shadow: "0 20px 55px rgba(37, 59, 141, 0.12)",
   },
+];
+
+const dishImageMatches = [
+  { keywords: ["biryani"], src: "hyderabadi-biryani.png" },
+  {
+    keywords: ["paneer butter", "butter masala"],
+    src: "paneer-butter-masala.png",
+  },
+  { keywords: ["pizza", "margherita"], src: "margherita-pizza.png" },
+  { keywords: ["chicken tikka", "tikka"], src: "chicken-tikka.png" },
+  { keywords: ["mango", "lassi"], src: "mango-lassi.png" },
+  { keywords: ["brownie", "chocolate"], src: "chocolate-brownie.png" },
 ];
 
 function hashString(input) {
@@ -83,6 +99,7 @@ function setTheme(restaurant) {
     "--text": theme.text,
     "--muted": theme.muted,
     "--accent": theme.accent,
+    "--accent-strong": theme.accentStrong,
     "--accent-soft": theme.accentSoft,
     "--border": theme.border,
     "--shadow": theme.shadow,
@@ -97,6 +114,67 @@ function formatPrice(price) {
     currency: "INR",
     maximumFractionDigits: 0,
   }).format(price);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => {
+    const entities = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+
+    return entities[character];
+  });
+}
+
+function normalizeImageSrc(src) {
+  if (!src) {
+    return "";
+  }
+
+  if (window.location.protocol === "file:" && src.startsWith("/menu/")) {
+    return `../public${src}`;
+  }
+
+  return src;
+}
+
+function getMenuAssetSrc(filename) {
+  return window.location.protocol === "file:"
+    ? `../public/menu/${filename}`
+    : `/menu/${filename}`;
+}
+
+document.documentElement.style.setProperty(
+  "--hero-image",
+  `url("${getMenuAssetSrc("hyderabadi-biryani.png")}")`,
+);
+
+function getDishImage(item) {
+  const explicitImage = item.image || item.imageUrl || item.photo;
+
+  if (explicitImage) {
+    return normalizeImageSrc(explicitImage);
+  }
+
+  const title = String(item.title ?? item.name ?? "").toLowerCase();
+  const match = dishImageMatches.find(({ keywords }) =>
+    keywords.some((keyword) => title.includes(keyword)),
+  );
+
+  return match ? getMenuAssetSrc(match.src) : "";
+}
+
+function getDishInitials(title) {
+  const words = String(title || "Menu Item")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2);
+
+  return words.map((word) => word[0]?.toUpperCase() ?? "").join("") || "MI";
 }
 
 function setError(message) {
@@ -153,7 +231,7 @@ function updateCart() {
       (item) => `
         <article class="selected-item">
           <div>
-            <h3>${item.title}</h3>
+            <h3>${escapeHtml(item.title)}</h3>
             <p>${item.quantity} x ${formatPrice(item.price)}</p>
           </div>
           <strong>${formatPrice(item.price * item.quantity)}</strong>
@@ -161,6 +239,15 @@ function updateCart() {
       `,
     )
     .join("");
+}
+
+function bindImageFallbacks() {
+  menuGridEl.querySelectorAll(".dish-image").forEach((image) => {
+    image.addEventListener("error", () => {
+      image.closest(".dish-media")?.classList.add("is-empty");
+      image.remove();
+    });
+  });
 }
 
 function updateQuantity(recipeId, nextQuantity) {
@@ -228,25 +315,36 @@ function renderRestaurant(restaurant) {
     .map((item, index) => {
       const ingredients =
         item.ingredients?.length > 0
-          ? item.ingredients.join(" • ")
+          ? item.ingredients.join(" / ")
           : "Ingredients will be updated soon";
+      const imageSrc = getDishImage(item);
+      const itemTitle = escapeHtml(item.title);
+      const recipeId = escapeHtml(item.id);
 
       return `
         <article class="dish-card" style="animation-delay: ${index * 80}ms">
+          <div class="dish-media${imageSrc ? "" : " is-empty"}">
+            ${
+              imageSrc
+                ? `<img class="dish-image" src="${escapeHtml(imageSrc)}" alt="${itemTitle}" loading="lazy" />`
+                : ""
+            }
+            <span class="dish-initials">${escapeHtml(getDishInitials(item.title))}</span>
+          </div>
           <div class="dish-body">
             <div class="dish-head">
               <div>
-                <h3 class="dish-title">${item.title}</h3>
-                <p class="ingredients">${ingredients}</p>
+                <h3 class="dish-title">${itemTitle}</h3>
+                <p class="ingredients">${escapeHtml(ingredients)}</p>
               </div>
               <span class="price-pill">${formatPrice(item.price)}</span>
             </div>
             <div class="quantity-row">
               <p class="price-note">Prepared for dine-in ordering.</p>
               <div class="quantity-controls">
-                <button class="quantity-button" type="button" data-action="decrease" data-recipe-id="${item.id}">-</button>
-                <span class="quantity-value" data-quantity-for="${item.id}">0</span>
-                <button class="quantity-button" type="button" data-action="increase" data-recipe-id="${item.id}">+</button>
+                <button class="quantity-button" type="button" aria-label="Decrease ${itemTitle}" data-action="decrease" data-recipe-id="${recipeId}">-</button>
+                <span class="quantity-value" data-quantity-for="${recipeId}">0</span>
+                <button class="quantity-button" type="button" aria-label="Increase ${itemTitle}" data-action="increase" data-recipe-id="${recipeId}">+</button>
               </div>
             </div>
           </div>
@@ -256,6 +354,7 @@ function renderRestaurant(restaurant) {
     .join("");
 
   bindQuantityControls();
+  bindImageFallbacks();
   updateCart();
 }
 
