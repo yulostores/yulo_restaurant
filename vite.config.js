@@ -19,4 +19,12 @@ export default defineConfig({
       "/health": "http://localhost:3000",
     },
   },
+  preview: {
+    rewrites: [
+      {
+        source: "/(.*)",
+        destination: "/index.html",
+      },
+    ],
+  },
 });
