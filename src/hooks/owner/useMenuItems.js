@@ -9,12 +9,18 @@ export const menuItemKeys = {
 
 // GET /owner/:rId/menu-items returns every item, available or not — filtering
 // is a client concern (the endpoint takes no query params).
-export function useMenuItems(restaurantId) {
+//
+// `enabled` lets callers skip the request while the restaurant is unapproved:
+// the route sits behind requireRestaurantApproved and 403s until then, so
+// firing it only buys a guaranteed error.
+export function useMenuItems(restaurantId, { enabled = true } = {}) {
   return useQuery({
     queryKey: menuItemKeys.list(restaurantId),
     queryFn: () => ownerApi.listMenuItems(restaurantId).then((r) => r.data.data.items ?? []),
-    enabled: !!restaurantId,
+    enabled: !!restaurantId && enabled,
     staleTime: 60_000,
+    // 401/403/404 won't fix themselves on a retry.
+    retry: (count, err) => (err?.status >= 400 && err?.status < 500 ? false : count < 2),
   });
 }
 
@@ -89,12 +95,14 @@ export const categoryKeys = {
   subs: (rId, cId) => ["categories", rId, cId, "subcategories"],
 };
 
-export function useCategories(restaurantId) {
+// Same approval gate as menu items — /categories is locked until admin approves.
+export function useCategories(restaurantId, { enabled = true } = {}) {
   return useQuery({
     queryKey: categoryKeys.list(restaurantId),
     queryFn: () => ownerApi.listCategories(restaurantId).then((r) => r.data.data.categories ?? []),
-    enabled: !!restaurantId,
+    enabled: !!restaurantId && enabled,
     staleTime: 5 * 60_000,
+    retry: (count, err) => (err?.status >= 400 && err?.status < 500 ? false : count < 2),
   });
 }
 

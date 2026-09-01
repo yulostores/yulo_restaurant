@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 
+import RestaurantLogo from "@/components/RestaurantLogo";
 import { cn } from "@/lib/utils";
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 
@@ -93,7 +94,10 @@ function NavItem({ icon: Icon, label, active, onClick }) {
 export default function Sidebar({ isOpen, onClose }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { logout } = useOwnerAuth();
+  const { logout, restaurant } = useOwnerAuth();
+  // Falls back to the product name only until the owner has a restaurant on file
+  // (fresh signup, pre-approval) — otherwise the sidebar carries their own brand.
+  const storeName = restaurant?.name || "Yulo Stores";
 
   async function handleLogout() {
     await logout();
@@ -125,9 +129,9 @@ export default function Sidebar({ isOpen, onClose }) {
       >
         <div>
           <div className="flex items-center justify-between gap-3 px-6 pb-6 pt-6">
-            <div className="flex items-center gap-3">
-              <span className="h-10 w-10 shrink-0 rounded-full bg-brand-dark2" />
-              <span className="text-xl text-brand-cream2">Yulo Stores</span>
+            <div className="flex min-w-0 items-center gap-3">
+              <RestaurantLogo name={storeName} src={restaurant?.logo} className="h-10 w-10" />
+              <span className="truncate text-xl text-brand-cream2">{storeName}</span>
             </div>
             <button
               type="button"

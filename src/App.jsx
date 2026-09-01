@@ -25,7 +25,6 @@ import CustomerApp from "./screens/customer/CustomerApp";
 import WaiterApp from "./screens/waiter/WaiterApp";
 import AdminApp from "./screens/admin/AdminApp";
 import AdminLogin from "./screens/admin/AdminLogin";
-import PanelSwitcher from "./components/PanelSwitcher";
 import OwnerLoginPage from "./screens/auth/OwnerLoginPage";
 import StaffLoginPage from "./screens/auth/StaffLoginPage";
 import OwnerRoute from "./components/OwnerRoute";
@@ -34,51 +33,48 @@ import AdminRoute from "./components/AdminRoute";
 
 export default function App() {
   return (
-    <>
-      <PanelSwitcher />
-      <Routes>
-        {/* ── Auth routes (public) ─────────────────────────────────────── */}
-        <Route path="/owner/login" element={<OwnerLoginPage />} />
-        <Route path="/staff/login" element={<StaffLoginPage />} />
-        <Route path="/admin/login" element={<AdminLogin />} />
+    <Routes>
+      {/* ── Auth routes (public) ─────────────────────────────────────── */}
+      <Route path="/owner/login" element={<OwnerLoginPage />} />
+      <Route path="/staff/login" element={<StaffLoginPage />} />
+      <Route path="/admin/login" element={<AdminLogin />} />
 
-        {/* ── Owner portal (protected) ─────────────────────────────────── */}
-        <Route path="/" element={<OwnerRoute><OwnerDashboard /></OwnerRoute>} />
-        <Route path="/dashboard" element={<OwnerRoute><OwnerDashboard /></OwnerRoute>} />
-        <Route path="/menu-management" element={<OwnerRoute><MenuManagement /></OwnerRoute>} />
-        <Route path="/qr" element={<OwnerRoute><QrManagement /></OwnerRoute>} />
-        <Route path="/offers" element={<OwnerRoute><Offers /></OwnerRoute>} />
-        <Route path="/orders" element={<OwnerRoute><ManageOrders /></OwnerRoute>} />
-        <Route path="/bill" element={<OwnerRoute><BillDetails /></OwnerRoute>} />
-        <Route path="/cancellations" element={<OwnerRoute><Cancellations /></OwnerRoute>} />
-        <Route path="/menu-items" element={<OwnerRoute><MenuItems /></OwnerRoute>} />
-        <Route path="/live-monitor" element={<OwnerRoute><LiveMonitor /></OwnerRoute>} />
-        <Route path="/store-settings" element={<OwnerRoute><StoreSettings /></OwnerRoute>} />
-        <Route path="/staff" element={<OwnerRoute><StaffManagement /></OwnerRoute>} />
-        <Route path="/profile" element={<OwnerRoute><Profile /></OwnerRoute>} />
+      {/* ── Owner portal (protected) ─────────────────────────────────── */}
+      <Route path="/" element={<OwnerRoute><OwnerDashboard /></OwnerRoute>} />
+      <Route path="/dashboard" element={<OwnerRoute><OwnerDashboard /></OwnerRoute>} />
+      <Route path="/menu-management" element={<OwnerRoute><MenuManagement /></OwnerRoute>} />
+      <Route path="/qr" element={<OwnerRoute><QrManagement /></OwnerRoute>} />
+      <Route path="/offers" element={<OwnerRoute><Offers /></OwnerRoute>} />
+      <Route path="/orders" element={<OwnerRoute><ManageOrders /></OwnerRoute>} />
+      <Route path="/bill" element={<OwnerRoute><BillDetails /></OwnerRoute>} />
+      <Route path="/cancellations" element={<OwnerRoute><Cancellations /></OwnerRoute>} />
+      <Route path="/menu-items" element={<OwnerRoute><MenuItems /></OwnerRoute>} />
+      <Route path="/live-monitor" element={<OwnerRoute><LiveMonitor /></OwnerRoute>} />
+      <Route path="/store-settings" element={<OwnerRoute><StoreSettings /></OwnerRoute>} />
+      <Route path="/staff" element={<OwnerRoute><StaffManagement /></OwnerRoute>} />
+      <Route path="/profile" element={<OwnerRoute><Profile /></OwnerRoute>} />
 
-        {/* ── Customer QR ordering app (public — OTP guards internally) ── */}
-        <Route path="/order/*" element={<CustomerApp />} />
+      {/* ── Customer QR ordering app (public — OTP guards internally) ── */}
+      <Route path="/order/*" element={<CustomerApp />} />
 
-        {/* ── Staff portals (protected by role) ────────────────────────── */}
-        <Route path="/chef" element={<StaffRoute role="chef"><ChefDashboard /></StaffRoute>} />
-        <Route path="/waiter/*" element={<StaffRoute role="waiter"><WaiterApp /></StaffRoute>} />
+      {/* ── Staff portals (protected by role) ────────────────────────── */}
+      <Route path="/chef" element={<StaffRoute role="chef"><ChefDashboard /></StaffRoute>} />
+      <Route path="/waiter/*" element={<StaffRoute role="waiter"><WaiterApp /></StaffRoute>} />
 
-        {/* ── Manager portal ────────────────────────────────────────────── */}
-        {/* The backend has no `manager` role — these screens run on the owner
-            session and read the owner-scoped endpoints. See API-GAPS.md. */}
-        <Route path="/manager" element={<OwnerRoute><ManagerDashboard /></OwnerRoute>} />
-        <Route path="/manager/dashboard" element={<OwnerRoute><ManagerDashboard /></OwnerRoute>} />
-        <Route path="/manager/orders" element={<OwnerRoute><ManagerOrders /></OwnerRoute>} />
-        <Route path="/manager/live" element={<OwnerRoute><ManagerLiveMonitoring /></OwnerRoute>} />
-        <Route path="/manager/requests" element={<OwnerRoute><ManagerRequests /></OwnerRoute>} />
-        <Route path="/manager/tables" element={<OwnerRoute><ManagerTables /></OwnerRoute>} />
+      {/* ── Manager portal ────────────────────────────────────────────── */}
+      {/* The backend has no `manager` role — these screens run on the owner
+          session and read the owner-scoped endpoints. See API-GAPS.md. */}
+      <Route path="/manager" element={<OwnerRoute><ManagerDashboard /></OwnerRoute>} />
+      <Route path="/manager/dashboard" element={<OwnerRoute><ManagerDashboard /></OwnerRoute>} />
+      <Route path="/manager/orders" element={<OwnerRoute><ManagerOrders /></OwnerRoute>} />
+      <Route path="/manager/live" element={<OwnerRoute><ManagerLiveMonitoring /></OwnerRoute>} />
+      <Route path="/manager/requests" element={<OwnerRoute><ManagerRequests /></OwnerRoute>} />
+      <Route path="/manager/tables" element={<OwnerRoute><ManagerTables /></OwnerRoute>} />
 
-        {/* ── Platform Admin portal ─────────────────────────────────────── */}
-        <Route path="/admin/*" element={<AdminRoute><AdminApp /></AdminRoute>} />
+      {/* ── Platform Admin portal ─────────────────────────────────────── */}
+      <Route path="/admin/*" element={<AdminRoute><AdminApp /></AdminRoute>} />
 
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }

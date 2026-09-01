@@ -6,17 +6,9 @@ import { useNavigate } from "react-router-dom";
 import { Clock, MapPin, QrCode, Star, Utensils } from "lucide-react";
 
 import { useRestaurant } from "@/hooks/customer/useMenu";
+import { isOpenNow, todayHoursLabel } from "@/lib/hours";
 import CustomerLayout, { formatPrice } from "./CustomerLayout";
 import { useCustomer } from "./CustomerApp";
-
-// The API returns openingHours as { monday: { open, close }, … } in 24h strings.
-function todayHours(openingHours) {
-  if (!openingHours) return null;
-  const day = new Date().toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-  const slot = openingHours[day];
-  if (!slot?.open || !slot?.close) return null;
-  return `${slot.open} – ${slot.close}`;
-}
 
 function addressLine(address) {
   if (!address) return null;
@@ -51,9 +43,12 @@ export default function QrLanding() {
     );
   }
 
-  const hours = todayHours(restaurant?.openingHours);
+  const hours = todayHoursLabel(restaurant?.operatingHours);
   const address = addressLine(restaurant?.address);
-  const closed = restaurant && restaurant.isOpen === false;
+  // `isOpenNow` answers null when the restaurant has no hours on record — unknown isn't
+  // "closed", so the badge and the warning below stay off rather than turning red.
+  const openNow = restaurant ? isOpenNow(restaurant.operatingHours) : null;
+  const closed = openNow === false;
 
   return (
     <CustomerLayout>
@@ -82,7 +77,7 @@ export default function QrLanding() {
                 <Utensils className="h-3.5 w-3.5" />
                 {session.tableId ? "Dine-in" : "Ordering"}
               </span>
-              {restaurant ? (
+              {openNow !== null ? (
                 <span
                   className={`rounded-full px-3 py-1 text-xs font-bold ${
                     closed ? "bg-[#FCE9E4] text-brand-maroon" : "bg-[#E8F5EC] text-brand-green"

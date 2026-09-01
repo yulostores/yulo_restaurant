@@ -59,6 +59,15 @@ export const ownerApi = {
   updateIngredients: (rId, itemId, ingredients) =>
     client.patch(`/owner/${rId}/menu-items/${itemId}/ingredients`, { ingredients }),
 
+  // ── Staff ────────────────────────────────────────────────────────
+  // role: "waiter" | "chef". `pin` is 4–8 digits and is only ever sent, never
+  // returned (`pinHash` is stripped server-side). DELETE is a soft delete that
+  // just sets isActive:false.
+  listStaff:   (rId)                => client.get(`/owner/${rId}/staff`),
+  createStaff: (rId, body)          => client.post(`/owner/${rId}/staff`, body),
+  updateStaff: (rId, staffId, body) => client.patch(`/owner/${rId}/staff/${staffId}`, body),
+  removeStaff: (rId, staffId)       => client.delete(`/owner/${rId}/staff/${staffId}`),
+
   // ── Categories & Subcategories ───────────────────────────────────
   listCategories:  (rId)            => client.get(`/owner/${rId}/categories`),
   createCategory:  (rId, body)      => client.post(`/owner/${rId}/categories`, body),

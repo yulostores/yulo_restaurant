@@ -2,11 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ownerApi } from "@/api/owner.api";
 
 export const settingsKeys = {
-  all:        (rId) => ["settings", rId],
-  main:       (rId) => ["settings", rId, "main"],
-  hours:      (rId) => ["settings", rId, "hours"],
-  delivery:   (rId) => ["settings", rId, "delivery"],
-  restaurant: (rId) => ["settings", rId, "restaurant"],
+  all:      (rId) => ["settings", rId],
+  main:     (rId) => ["settings", rId, "main"],
+  hours:    (rId) => ["settings", rId, "hours"],
+  delivery: (rId) => ["settings", rId, "delivery"],
 };
 
 // GET /owner/:rId/settings — the restaurant record (name, logo, banner, …)
@@ -72,7 +71,9 @@ export function useUpdateHours(restaurantId) {
 export function useDeliverySettings(restaurantId) {
   return useQuery({
     queryKey: settingsKeys.delivery(restaurantId),
-    queryFn: () => ownerApi.getDelivery(restaurantId).then((r) => r.data.data),
+    // GET /settings/delivery answers { data: { delivery: {...} } } — unwrapping only to
+    // `data` handed callers an object whose radiusKm/baseCharge/… were all undefined.
+    queryFn: () => ownerApi.getDelivery(restaurantId).then((r) => r.data.data.delivery ?? r.data.data),
     enabled: !!restaurantId,
     staleTime: 5 * 60_000,
   });
@@ -82,25 +83,6 @@ export function useUpdateDelivery(restaurantId) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body) => ownerApi.updateDelivery(restaurantId, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.all(restaurantId) }),
-  });
-}
-
-// ── Restaurant profile (separate from settings; editable pre-approval) ─
-export function useRestaurantProfile(restaurantId) {
-  return useQuery({
-    queryKey: settingsKeys.restaurant(restaurantId),
-    queryFn: () =>
-      ownerApi.getRestaurantDetail(restaurantId).then((r) => r.data.data.restaurant ?? r.data.data),
-    enabled: !!restaurantId,
-    staleTime: 5 * 60_000,
-  });
-}
-
-export function useUpdateRestaurant(restaurantId) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body) => ownerApi.updateRestaurant(restaurantId, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.all(restaurantId) }),
   });
 }

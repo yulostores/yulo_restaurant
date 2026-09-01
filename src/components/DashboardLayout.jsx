@@ -4,8 +4,9 @@
 import { useState } from "react";
 import { Menu } from "lucide-react";
 
+import RestaurantLogo from "@/components/RestaurantLogo";
 import Sidebar from "@/components/Sidebar";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useOwnerAuthSafe } from "@/context/OwnerAuthContext";
 
 export function Topbar({ onMenuToggle }) {
@@ -34,13 +35,18 @@ export function Topbar({ onMenuToggle }) {
             <Menu className="h-5 w-5" />
           </button>
         )}
-        <span className="h-9 w-9 shrink-0 rounded-full bg-brand-dark2" />
+        <RestaurantLogo name={restaurant?.name} src={restaurant?.logo} />
         <span className="text-lg font-bold text-brand-red sm:text-xl">
           {restaurantName}
         </span>
       </div>
       <div className="flex items-center gap-2 sm:gap-3.5">
         <Avatar>
+          {/* Falls back to initials while the image loads, or when the owner has
+              never uploaded one — Radix swaps them for us. */}
+          {user?.profilePicture ? (
+            <AvatarImage src={user.profilePicture} alt={displayName} />
+          ) : null}
           <AvatarFallback className="bg-brand-gradient text-xs font-semibold text-white">
             {initials}
           </AvatarFallback>

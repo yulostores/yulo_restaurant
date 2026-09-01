@@ -5,11 +5,16 @@ const staffKeys = {
   all: (rId) => ["staff", rId],
 };
 
-export function useStaff(restaurantId) {
+// `enabled` lets callers skip the request entirely while the restaurant is
+// unapproved — every /staff route 403s until then, so firing it would only
+// produce a guaranteed error and pointless retries.
+export function useStaff(restaurantId, { enabled = true } = {}) {
   return useQuery({
     queryKey: staffKeys.all(restaurantId),
     queryFn: () => ownerApi.listStaff(restaurantId).then((r) => r.data.data.staff ?? []),
-    enabled: !!restaurantId,
+    enabled: !!restaurantId && enabled,
+    // 401/403/404 won't fix themselves on a retry.
+    retry: (count, err) => (err?.status >= 400 && err?.status < 500 ? false : count < 2),
   });
 }
 

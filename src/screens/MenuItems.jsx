@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { useCategories, useMenuItems, useToggleMenuItem } from "@/hooks/owner/useMenuItems";
+import { errorMessage, isNotApprovedError } from "@/lib/errors";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,16 +20,29 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
+// The menu routes sit behind requireRestaurantApproved, so an unapproved
+// restaurant gets a 403 rather than an empty menu. Say why, in the owner's
+// terms, instead of surfacing a bare failure.
+const STATUS_NOTICE = {
+  pending:   "Your restaurant is still under review. Your menu unlocks as soon as admin approves it.",
+  rejected:  "Your restaurant wasn't approved, so the menu is locked. Update your store details and resubmit for review.",
+  suspended: "This restaurant is suspended. The menu is locked until it's reactivated.",
+  expired:   "This restaurant's listing has expired. Renew it to manage your menu again.",
+};
+
 export default function MenuItems() {
-  const { restaurantId } = useOwnerAuth();
+  const { restaurantId, approvalStatus, isApproved } = useOwnerAuth();
   const navigate = useNavigate();
 
   const [search, setSearch]     = useState("");
   const [category, setCategory] = useState("all");
   const [status, setStatus]     = useState("all");
 
-  const { data: items = [], isLoading, isError } = useMenuItems(restaurantId);
-  const { data: categoryList = [] } = useCategories(restaurantId);
+  // Don't even fire the request before approval — it would only 403.
+  const { data: items = [], isLoading, isError, error } = useMenuItems(restaurantId, {
+    enabled: isApproved,
+  });
+  const { data: categoryList = [] } = useCategories(restaurantId, { enabled: isApproved });
   const toggleMutation = useToggleMenuItem(restaurantId);
 
   // Items carry `categoryId` as a raw id, so resolve names from the category list.
@@ -55,10 +69,46 @@ export default function MenuItems() {
     }),
   [items, search, category, status, categoryNameById]);
 
-  if (isError) {
+  // A locked menu isn't an error — the notice below explains it, so don't also
+  // show a red banner for the 403 it would have produced.
+  const listError = isError && !isNotApprovedError(error)
+    ? errorMessage(error, "Couldn't load your menu. Please refresh and try again.")
+    : "";
+
+  const statusNotice = !isApproved
+    ? (STATUS_NOTICE[approvalStatus] ?? STATUS_NOTICE.pending)
+    : "";
+
+  if (!restaurantId) {
     return (
       <DashboardLayout>
-        <p className="text-muted-foreground">Failed to load menu items.</p>
+        <div className="rounded-2xl border border-brand-cream bg-[#FFF3E0] px-4 py-3 text-sm text-[#8a4b16]">
+          Set up your restaurant in Store Settings first — the menu is built per restaurant.
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (statusNotice) {
+    return (
+      <DashboardLayout>
+        <div>
+          <h1 className="text-2xl font-bold">Menu Items</h1>
+          <p className="text-sm text-muted-foreground">
+            Browse the catalog and control item availability in real time.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-brand-cream bg-[#FFF3E0] px-4 py-3 text-sm text-[#8a4b16]">
+          {statusNotice}
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (listError) {
+    return (
+      <DashboardLayout>
+        <p className="rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{listError}</p>
       </DashboardLayout>
     );
   }

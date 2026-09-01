@@ -76,6 +76,19 @@ export function OwnerAuthProvider({ children }) {
     return list;
   }, []);
 
+  // The cached copies below are display-only (top bar name, avatar, restaurant name) and
+  // are otherwise refreshed just at login. A screen that saves one of those fields calls
+  // these so the chrome updates immediately instead of showing the old value until the
+  // next sign-in — /profile for the user, /store-settings for the restaurant.
+  const updateUser = useCallback(
+    (patch) => setUser((u) => (u ? { ...u, ...patch } : u)),
+    [],
+  );
+  const updateRestaurant = useCallback(
+    (patch) => setRestaurant((r) => (r ? { ...r, ...patch } : r)),
+    [],
+  );
+
   const login = useCallback(async ({ email, password }) => {
     const { data } = await authApi.ownerLogin({ email, password });
     const { user: u, accessToken } = data.data;
@@ -120,6 +133,8 @@ export function OwnerAuthProvider({ children }) {
         signup,
         logout,
         fetchRestaurants,
+        updateUser,
+        updateRestaurant,
         isAuthenticated: !!user,
       }}
     >
