@@ -1,54 +1,57 @@
 import { useQuery } from "@tanstack/react-query";
 import { ownerApi } from "@/api/owner.api";
 
-// ── Query key factory ────────────────────────────────────────────────
-// Centralised so invalidation targets are consistent across the app.
+// Query key factory — centralised so invalidation targets stay consistent.
 export const dashboardKeys = {
   all:          (rId) => ["dashboard", rId],
-  kpis:         (rId) => ["dashboard", rId, "kpis"],
+  kpis:         (rId, period) => ["dashboard", rId, "kpis", period],
   sales:        (rId, period) => ["dashboard", rId, "sales", period],
-  topItems:     (rId) => ["dashboard", rId, "top-items"],
+  topItems:     (rId, period) => ["dashboard", rId, "top-items", period],
   recentOrders: (rId) => ["dashboard", rId, "recent-orders"],
 };
 
+// period: "today" | "week" | "month" | "year"
+
 // ── Dashboard KPIs ───────────────────────────────────────────────────
-// Returns: { totalOrders, revenue, liveMonitoring, averageRating }
-export function useDashboardKPIs(restaurantId) {
+// Returns { revenue, orders, avgOrderValue, dineIn, delivery,
+//           cancelledOrders, newCustomers, period }
+export function useDashboardKPIs(restaurantId, period = "today") {
   return useQuery({
-    queryKey: dashboardKeys.kpis(restaurantId),
-    queryFn: () => ownerApi.getDashboardKPIs(restaurantId).then((r) => r.data.data),
+    queryKey: dashboardKeys.kpis(restaurantId, period),
+    queryFn: () => ownerApi.getDashboardKPIs(restaurantId, period).then((r) => r.data.data),
     enabled: !!restaurantId,
-    staleTime: 60_000,        // re-use cached value for 1 min
-    refetchInterval: 120_000, // background poll every 2 min
+    staleTime: 60_000,
+    refetchInterval: 120_000,
   });
 }
 
 // ── Sales Chart ──────────────────────────────────────────────────────
-// period: "today" | "week" | "month"
+// Returns { labels: string[], revenue: number[], orders: number[] }
 export function useSalesChart(restaurantId, period = "week") {
   return useQuery({
     queryKey: dashboardKeys.sales(restaurantId, period),
-    queryFn: () => ownerApi.getSalesChart(restaurantId, period).then((r) => r.data.data.chart),
+    queryFn: () => ownerApi.getSalesChart(restaurantId, period).then((r) => r.data.data),
     enabled: !!restaurantId,
     staleTime: 60_000,
   });
 }
 
 // ── Top Items ────────────────────────────────────────────────────────
-export function useTopItems(restaurantId, limit = 5) {
+// Returns [{ menuItemId, name, totalQuantity, totalRevenue }]
+export function useTopItems(restaurantId, period = "month") {
   return useQuery({
-    queryKey: dashboardKeys.topItems(restaurantId),
-    queryFn: () => ownerApi.getTopItems(restaurantId, limit).then((r) => r.data.data.items),
+    queryKey: dashboardKeys.topItems(restaurantId, period),
+    queryFn: () => ownerApi.getTopItems(restaurantId, period).then((r) => r.data.data.items ?? []),
     enabled: !!restaurantId,
-    staleTime: 5 * 60_000, // items don't change quickly
+    staleTime: 5 * 60_000,
   });
 }
 
-// ── Recent Orders ────────────────────────────────────────────────────
-export function useRecentOrders(restaurantId, limit = 10) {
+// ── Recent Orders (server returns the last 10) ────────────────────────
+export function useRecentOrders(restaurantId) {
   return useQuery({
     queryKey: dashboardKeys.recentOrders(restaurantId),
-    queryFn: () => ownerApi.getRecentOrders(restaurantId, limit).then((r) => r.data.data.orders),
+    queryFn: () => ownerApi.getRecentOrders(restaurantId).then((r) => r.data.data.orders ?? []),
     enabled: !!restaurantId,
     staleTime: 30_000,
     refetchInterval: 60_000,

@@ -1,28 +1,31 @@
-// OTP verification — validates the code, creates the customer session, and
-// redirects back to the QR/menu/cart flow the customer came from (PRD §7).
-// Includes resend cooldown and a clear error path.
+// OTP verification — POST /api/auth/customer/otp/verify. The server issues the
+// access token + refresh cookie and tells us whether this was a first sign-up.
+// The code is 6 digits (API.md § Verify Customer OTP).
 
 import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
-import { requestJson, storeToken } from "@/api";
 import CustomerLayout from "./CustomerLayout";
 import { useCustomer } from "./CustomerApp";
 
-const OTP_LENGTH = 4;
+const OTP_LENGTH = 6;
+const RESEND_COOLDOWN_SECONDS = 30;
 
 export default function OtpVerify() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { session, setSession } = useCustomer();
-  const [digits, setDigits] = useState(Array(OTP_LENGTH).fill(""));
+  const { auth, setSession } = useCustomer();
+
+  const phone = location.state?.phone ?? "";
+  const from = location.state?.from ?? "/order/menu";
+  // Present only outside production — lets QA skip the SMS round trip.
+  const devOtp = location.state?.devOtp;
+
+  const [digits, setDigits] = useState(() => Array(OTP_LENGTH).fill(""));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [cooldown, setCooldown] = useState(30);
+  const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
   const inputs = useRef([]);
-
-  const from = location.state?.from ?? "/order/menu";
-  const devOtp = location.state?.devOtp;
 
   useEffect(() => {
     if (cooldown <= 0) return undefined;
@@ -30,10 +33,8 @@ export default function OtpVerify() {
     return () => clearTimeout(timer);
   }, [cooldown]);
 
-  // Guard: don't show OTP entry if we never captured a number.
-  if (!session.mobile) {
-    return <Navigate to="/order/login" replace />;
-  }
+  // No phone in the navigation state means the user deep-linked here.
+  if (!phone) return <Navigate to="/order/login" replace />;
 
   function setDigit(index, value) {
     const char = value.replace(/\D/g, "").slice(-1);
@@ -42,9 +43,7 @@ export default function OtpVerify() {
       next[index] = char;
       return next;
     });
-    if (char && index < OTP_LENGTH - 1) {
-      inputs.current[index + 1]?.focus();
-    }
+    if (char && index < OTP_LENGTH - 1) inputs.current[index + 1]?.focus();
   }
 
   function handleKeyDown(index, event) {
@@ -53,28 +52,28 @@ export default function OtpVerify() {
     }
   }
 
+  function handlePaste(event) {
+    const pasted = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, OTP_LENGTH);
+    if (!pasted) return;
+    event.preventDefault();
+    const next = Array(OTP_LENGTH).fill("");
+    pasted.split("").forEach((c, i) => { next[i] = c; });
+    setDigits(next);
+    inputs.current[Math.min(pasted.length, OTP_LENGTH - 1)]?.focus();
+  }
+
   async function verify(event) {
-    event?.preventDefault();
-    const otp = digits.join("");
-    if (otp.length !== OTP_LENGTH) {
-      setError("Enter the 4-digit code");
+    event.preventDefault();
+    const code = digits.join("");
+    if (code.length !== OTP_LENGTH) {
+      setError(`Enter all ${OTP_LENGTH} digits`);
       return;
     }
-    setLoading(true);
     setError("");
+    setLoading(true);
     try {
-      const payload = await requestJson("/customer/otp/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mobile: session.mobile, otp, name: session.name }),
-      });
-      storeToken(payload.data.token);
-      setSession((current) => ({
-        ...current,
-        verified: true,
-        customer: payload.data.customer,
-        name: payload.data.customer.name || current.name,
-      }));
+      await auth.verifyOtp({ phone, code, tosAccepted: true });
+      setSession((s) => ({ ...s, verified: true, phone }));
       navigate(from, { replace: true });
     } catch (err) {
       setError(err.message);
@@ -85,67 +84,65 @@ export default function OtpVerify() {
 
   async function resend() {
     if (cooldown > 0) return;
+    setError("");
     try {
-      await requestJson("/customer/otp/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mobile: session.mobile }),
-      });
-      setCooldown(30);
-      setError("");
+      await auth.sendOtp(phone);
+      setCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
       setError(err.message);
     }
   }
 
   return (
-    <CustomerLayout title="Enter OTP" showBack onBack={() => navigate("/order/login")}>
-      <form className="flex flex-col gap-6 px-5 py-8" onSubmit={verify}>
-        <div>
-          <h2 className="text-xl font-bold">Verify mobile number</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Enter the 4-digit code sent to <span className="font-semibold">+91 {session.mobile}</span>.
-          </p>
-          {devOtp ? (
-            <p className="mt-2 inline-block rounded-lg bg-brand-orange/10 px-2.5 py-1 text-xs font-medium text-brand-orange">
-              Demo OTP: {devOtp}
-            </p>
-          ) : null}
-        </div>
+    <CustomerLayout title="Verify your number" showBack>
+      <form onSubmit={verify} className="space-y-5 px-5 py-6">
+        <p className="text-sm text-muted-foreground">
+          We sent a {OTP_LENGTH}-digit code to{" "}
+          <span className="font-semibold text-foreground">+91 {phone}</span>.
+        </p>
 
-        <div className="flex justify-between gap-3">
-          {digits.map((digit, index) => (
+        {devOtp ? (
+          <p className="rounded-lg bg-[#FFF3E0] px-3 py-2 text-xs text-[#D9480F]">
+            Development mode — your code is <strong>{devOtp}</strong>
+          </p>
+        ) : null}
+
+        {error ? (
+          <p className="rounded-lg bg-[#FCE9E4] px-3 py-2 text-sm text-brand-maroon">{error}</p>
+        ) : null}
+
+        <div className="flex justify-between gap-2" onPaste={handlePaste}>
+          {digits.map((digit, i) => (
             <input
-              key={index}
-              ref={(el) => (inputs.current[index] = el)}
+              key={i}
+              ref={(el) => { inputs.current[i] = el; }}
               value={digit}
-              onChange={(e) => setDigit(index, e.target.value)}
-              onKeyDown={(e) => handleKeyDown(index, e)}
+              onChange={(e) => setDigit(i, e.target.value)}
+              onKeyDown={(e) => handleKeyDown(i, e)}
               inputMode="numeric"
+              autoComplete="one-time-code"
               maxLength={1}
-              autoFocus={index === 0}
-              className="h-16 w-full rounded-xl border border-brand-cream/80 bg-white text-center text-2xl font-bold outline-none focus:border-brand-orange"
+              aria-label={`Digit ${i + 1}`}
+              className="h-14 w-full rounded-xl border border-brand-cream bg-white text-center text-xl font-bold outline-none transition focus:border-brand-orange focus:ring-1 focus:ring-brand-orange/30"
             />
           ))}
         </div>
-
-        {error ? <p className="text-sm text-brand-maroon">{error}</p> : null}
 
         <button
           type="submit"
           disabled={loading}
           className="w-full rounded-xl bg-brand-gradient py-3.5 text-base font-bold text-white transition hover:brightness-105 disabled:opacity-60"
         >
-          {loading ? "Verifying…" : "Verify & Continue"}
+          {loading ? "Verifying…" : "Verify & continue"}
         </button>
 
         <button
           type="button"
           onClick={resend}
           disabled={cooldown > 0}
-          className="text-center text-sm font-medium text-brand-orange disabled:text-muted-foreground"
+          className="w-full text-center text-sm font-semibold text-brand-orange disabled:text-muted-foreground"
         >
-          {cooldown > 0 ? `Resend OTP in ${cooldown}s` : "Resend OTP"}
+          {cooldown > 0 ? `Resend code in ${cooldown}s` : "Resend code"}
         </button>
       </form>
     </CustomerLayout>

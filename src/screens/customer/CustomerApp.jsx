@@ -1,10 +1,13 @@
-// Customer QR ordering app (/order/*) — PRD §5–§9. A self-contained mobile-first
-// flow with its own nested routes and shared session + cart state (persisted to
-// localStorage so the OTP redirect and refreshes keep context). Mounted from
-// App.jsx as a single `/order/*` route.
+// Customer QR ordering app (/order/*). Self-contained mobile-first flow with
+// its own nested routes and shared session + cart state (persisted so the OTP
+// redirect and page refreshes keep context).
+//
+// Session context comes from the scanned QR URL, which the backend mints as
+//   …/menu?restaurantId=<id>&tableId=<id>
+// so `restaurantId` is always read from the URL — never defaulted to a literal.
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useSearchParams } from "react-router-dom";
 
 import { useCustomerAuth } from "@/context/CustomerAuthContext";
 
@@ -23,11 +26,18 @@ import CustomerProfile from "./CustomerProfile";
 const SESSION_KEY = "yulo_customer_session";
 const CART_KEY = "yulo_customer_cart";
 
+const EMPTY_SESSION = {
+  restaurantId: null,
+  tableId: null,
+  verified: false,
+  phone: "",
+};
+
 function readJson(key, fallback) {
   try {
     const raw = window.localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch (_error) {
+    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+  } catch {
     return fallback;
   }
 }
@@ -41,10 +51,34 @@ export function useCustomer() {
 }
 
 export default function CustomerApp() {
-  const [session, setSession] = useState(() =>
-    readJson(SESSION_KEY, { verified: false, mobile: "", name: "", tableNumber: "", orderType: "dine-in" }),
-  );
-  const [cart, setCart] = useState(() => readJson(CART_KEY, []));
+  const [params] = useSearchParams();
+  const [session, setSession] = useState(() => readJson(SESSION_KEY, EMPTY_SESSION));
+  const [cart, setCart] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem(CART_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Capture QR context from the URL as soon as it appears, so it survives the
+  // login/OTP redirects. Switching restaurants clears the cart.
+  const urlRestaurantId = params.get("restaurantId");
+  const urlTableId = params.get("tableId");
+
+  useEffect(() => {
+    if (!urlRestaurantId && !urlTableId) return;
+    setSession((current) => {
+      const switched = urlRestaurantId && current.restaurantId && current.restaurantId !== urlRestaurantId;
+      if (switched) setCart([]);
+      return {
+        ...current,
+        restaurantId: urlRestaurantId ?? current.restaurantId,
+        tableId: urlTableId ?? current.tableId,
+      };
+    });
+  }, [urlRestaurantId, urlTableId]);
 
   useEffect(() => {
     window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
@@ -55,41 +89,48 @@ export default function CustomerApp() {
   }, [cart]);
 
   const api = useMemo(() => {
-    function addToCart(item, quantity = 1, instructions = "") {
+    // `item` is a menu item straight off the API: _id, name, effectivePrice, …
+    function addToCart(item, quantity = 1, specialInstructions = "") {
       setCart((current) => {
-        const existing = current.find((line) => line.id === item.id);
+        const existing = current.find((line) => line.menuItemId === item._id);
         if (existing) {
           return current.map((line) =>
-            line.id === item.id
-              ? { ...line, quantity: line.quantity + quantity, instructions: instructions || line.instructions }
+            line.menuItemId === item._id
+              ? {
+                  ...line,
+                  quantity: line.quantity + quantity,
+                  specialInstructions: specialInstructions || line.specialInstructions,
+                }
               : line,
           );
         }
         return [
           ...current,
           {
-            id: item.id,
+            menuItemId: item._id,
             name: item.name,
-            price: item.price,
-            image: item.image,
+            price: item.effectivePrice ?? item.discountedPrice ?? item.sellingPrice ?? 0,
+            image: item.image ?? null,
             foodType: item.foodType,
             quantity,
-            instructions,
+            specialInstructions,
           },
         ];
       });
     }
 
-    function setQuantity(id, quantity) {
+    function setQuantity(menuItemId, quantity) {
       setCart((current) =>
         quantity <= 0
-          ? current.filter((line) => line.id !== id)
-          : current.map((line) => (line.id === id ? { ...line, quantity } : line)),
+          ? current.filter((line) => line.menuItemId !== menuItemId)
+          : current.map((line) =>
+              line.menuItemId === menuItemId ? { ...line, quantity } : line,
+            ),
       );
     }
 
-    function removeFromCart(id) {
-      setCart((current) => current.filter((line) => line.id !== id));
+    function removeFromCart(menuItemId) {
+      setCart((current) => current.filter((line) => line.menuItemId !== menuItemId));
     }
 
     function clearCart() {
@@ -134,11 +175,11 @@ export default function CustomerApp() {
   );
 }
 
-// Redirect unauthenticated customers to login, preserving intended destination.
+// Redirect unauthenticated customers to login, preserving the destination.
 function Guard({ children }) {
-  const { auth, session } = useCustomer();
+  const { auth } = useCustomer();
   const location = useLocation();
-  if (!auth.isAuthenticated && !session.verified) {
+  if (!auth.isAuthenticated) {
     return <Navigate to="/order/login" replace state={{ from: location.pathname }} />;
   }
   return children;

@@ -1,11 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { customerApi } from "@/api/customer.api";
+import { authApi } from "@/api/auth.api";
 import { setAccessToken, getAccessToken } from "@/api/client";
 
-// Customer auth uses the same JWT flow as the owner.
-// The server's /api/auth/* endpoints work for all roles — role is encoded in the token.
-// Access token stored in memory, refresh token in HttpOnly cookie.
-// Customer profile in localStorage (non-sensitive display data).
+// Customer auth: email/password (POST /api/auth/{signup,login}) or phone/OTP
+// (POST /api/auth/customer/otp/{send,verify}). Signup always creates a
+// `customer` — the endpoint takes no role field.
+//
+// Access token in memory, refresh token in an HttpOnly cookie, display profile
+// in localStorage.
 
 const PROFILE_KEY = "yulo_customer_profile";
 
@@ -27,10 +29,10 @@ export function CustomerAuthProvider({ children }) {
     else          localStorage.removeItem(PROFILE_KEY);
   }, [customer]);
 
-  // On mount: silent refresh if profile exists but token is gone (page reload)
+  // Silent refresh if the profile survived a reload but the token did not.
   useEffect(() => {
     if (customer && !getAccessToken()) {
-      customerApi.refresh()
+      authApi.refresh()
         .then(({ data }) => setAccessToken(data.data.accessToken))
         .catch(() => { setCustomer(null); localStorage.removeItem(PROFILE_KEY); })
         .finally(() => setLoading(false));
@@ -40,7 +42,7 @@ export function CustomerAuthProvider({ children }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const login = useCallback(async ({ email, password }) => {
-    const { data } = await customerApi.login({ email, password });
+    const { data } = await authApi.customerLogin({ email, password });
     const { user: u, accessToken } = data.data;
     setAccessToken(accessToken);
     setCustomer(u);
@@ -48,22 +50,46 @@ export function CustomerAuthProvider({ children }) {
   }, []);
 
   const signup = useCallback(async ({ name, email, password }) => {
-    const { data } = await customerApi.signup({ name, email, password });
+    const { data } = await authApi.customerSignup({ name, email, password });
     const { user: u, accessToken } = data.data;
     setAccessToken(accessToken);
     setCustomer(u);
     return u;
   }, []);
 
+  // ── Phone / OTP ──────────────────────────────────────────────────────
+  // Returns { phone, devOtp? } — devOtp is only present outside production.
+  const sendOtp = useCallback(async (phone) => {
+    const { data } = await authApi.customerOtpSend({ phone });
+    return data.data;
+  }, []);
+
+  const verifyOtp = useCallback(async ({ phone, code, tosAccepted = true }) => {
+    const { data } = await authApi.customerOtpVerify({ phone, code, tosAccepted });
+    const { user: u, accessToken, isNewUser } = data.data;
+    setAccessToken(accessToken);
+    setCustomer(u);
+    return { user: u, isNewUser };
+  }, []);
+
   const logout = useCallback(async () => {
-    try { await customerApi.logout(); } catch { /* silent */ }
+    try { await authApi.logout(); } catch { /* silent */ }
     setAccessToken(null);
     setCustomer(null);
   }, []);
 
   return (
     <CustomerAuthContext.Provider
-      value={{ customer, loading, login, signup, logout, isAuthenticated: !!customer }}
+      value={{
+        customer,
+        loading,
+        login,
+        signup,
+        sendOtp,
+        verifyOtp,
+        logout,
+        isAuthenticated: !!customer,
+      }}
     >
       {children}
     </CustomerAuthContext.Provider>

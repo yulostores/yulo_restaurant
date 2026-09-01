@@ -1,28 +1,17 @@
-// Manager's Dashboard (/manager) — Figma node 173:1357. The manager view mirrors
-// the owner dashboard but drops Revenue (managers don't see takings) and the
-// hourly sales bar chart, promoting the order donut to a full-width "Order Weekly
-// Breakdown". Reuses the shared /restaurant_owner/dashboard mock payload.
+// Manager's Dashboard (/manager). The manager view mirrors the owner dashboard
+// but drops revenue figures (managers don't see takings).
+//
+// The backend has no `manager` role or /manager/* endpoints, so this runs on the
+// owner session and reads the owner-scoped dashboard + orders endpoints.
+// See API-GAPS.md.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
-import { ChevronDown, Flame, MoreHorizontal, Star } from "lucide-react";
+import { Flame, Star } from "lucide-react";
 
-import { requestJson } from "@/api";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -31,44 +20,48 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useOwnerAuth } from "@/context/OwnerAuthContext";
+import {
+  useDashboardKPIs,
+  useRecentOrders,
+  useTopItems,
+} from "@/hooks/owner/useDashboard";
+import { useOwnerOrders } from "@/hooks/owner/useOrders";
+import { useSettings } from "@/hooks/owner/useSettings";
 
-const MANAGER_PROFILE = {
-  restaurantName: "Saffron Kitchen",
-  userName: "Alex Mercy",
-  role: "Manager",
+const BREAKDOWN_COLORS = {
+  "Dine-in":   "#D9480F",
+  Delivery:    "#F0A202",
+  Cancelled:   "#B3261E",
 };
 
-// Maps a status string to a Badge variant (defined in ui/badge.jsx).
-function statusVariant(status) {
-  const key = status.toLowerCase();
-  if (key.includes("paid") || key.includes("delivered")) return "ok";
+// Kitchen pipeline buckets, derived from the order status the API returns.
+const KITCHEN_BUCKETS = [
+  { key: "placed",    label: "New",       tag: "QUEUED" },
+  { key: "confirmed", label: "Confirmed", tag: "ACCEPTED" },
+  { key: "preparing", label: "Preparing", tag: "IN KITCHEN" },
+  { key: "ready",     label: "Ready",     tag: "TO SERVE" },
+];
+
+function statusVariant(status = "") {
+  const key = String(status).toLowerCase();
+  if (key.includes("delivered")) return "ok";
   if (key.includes("ready")) return "info";
-  if (key.includes("prepar") || key.includes("way")) return "warn";
-  if (key.includes("pending")) return "muted";
+  if (key.includes("prepar") || key.includes("out_for")) return "warn";
+  if (key.includes("placed") || key.includes("confirmed")) return "muted";
   if (key.includes("cancel")) return "danger";
   return "muted";
 }
 
-function PeriodDropdown({ value = "Today" }) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 gap-1.5 rounded-lg border-brand-cream/70 text-[13px] font-normal text-[#5f5f5f]"
-        >
-          {value}
-          <ChevronDown className="h-3.5 w-3.5" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem>Today</DropdownMenuItem>
-        <DropdownMenuItem>This Week</DropdownMenuItem>
-        <DropdownMenuItem>This Month</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+function formatTime(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function itemSummary(order) {
+  const items = order.items ?? [];
+  if (items.length === 0) return "—";
+  return items.map((i) => `${i.quantity}× ${i.name}`).join(", ");
 }
 
 function StatCard({ title, value, caption, stars }) {
@@ -79,13 +72,14 @@ function StatCard({ title, value, caption, stars }) {
           <span className="text-[13px] text-muted-foreground">{title}</span>
           <span className="h-[22px] w-[22px] rounded-full bg-brand-orange/10" />
         </div>
-        <strong className="mt-2.5 block text-[28px] font-bold leading-none">
-          {value}
-        </strong>
-        {stars ? (
+        <strong className="mt-2.5 block text-[28px] font-bold leading-none">{value}</strong>
+        {stars != null ? (
           <div className="mt-2 flex gap-0.5 text-brand-saffron">
             {Array.from({ length: 5 }).map((_, i) => (
-              <Star key={i} className="h-3.5 w-3.5 fill-current" />
+              <Star
+                key={i}
+                className={`h-3.5 w-3.5 ${i < Math.round(stars) ? "fill-current" : "opacity-30"}`}
+              />
             ))}
           </div>
         ) : null}
@@ -96,228 +90,279 @@ function StatCard({ title, value, caption, stars }) {
 }
 
 export default function ManagerDashboard() {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState("");
+  const { restaurantId } = useOwnerAuth();
 
-  useEffect(() => {
-    requestJson("/restaurant_owner/dashboard")
-      .then((payload) => setData(payload.data))
-      .catch((err) => setError(err.message));
-  }, []);
+  const { data: kpis, isLoading: kpisLoading, isError, error } = useDashboardKPIs(restaurantId, "today");
+  const { data: restaurant }   = useSettings(restaurantId);
+  const { data: topItems = [] } = useTopItems(restaurantId, "month");
+  const { data: recentOrders = [] } = useRecentOrders(restaurantId);
+  // Live kitchen view: the owner token can't call the chef KDS endpoints, so the
+  // queue is derived from the owner's own order list.
+  const { data: liveOrders = [] } = useOwnerOrders(restaurantId, { limit: 50 });
 
-  const queue = data?.kitchen.queue ?? [];
-  const columns = useMemo(
-    () => [
-      { accessorKey: "table", header: "Table", cell: (c) => <span className="font-semibold">{c.getValue()}</span> },
-      { accessorKey: "items", header: "Order Items" },
-      {
-        accessorKey: "status",
-        header: "Status",
-        cell: (c) => <Badge variant={statusVariant(c.getValue())}>{c.getValue()}</Badge>,
-      },
-      { accessorKey: "time", header: "Time", cell: (c) => <span className="text-muted-foreground">{c.getValue()}</span> },
-      {
-        id: "actions",
-        header: "Actions",
-        cell: (c) =>
-          c.row.original.action ? (
-            <button type="button" className="text-[13px] font-semibold text-brand-orange">
-              {c.row.original.action}
-            </button>
-          ) : (
-            <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
-          ),
-      },
-    ],
-    [],
+  const breakdown = useMemo(() => {
+    if (!kpis) return { total: 0, segments: [] };
+    const raw = [
+      { label: "Dine-in",   value: Number(kpis.dineIn) || 0 },
+      { label: "Delivery",  value: Number(kpis.delivery) || 0 },
+      { label: "Cancelled", value: Number(kpis.cancelledOrders) || 0 },
+    ].filter((s) => s.value > 0);
+    const total = raw.reduce((sum, s) => sum + s.value, 0);
+    return {
+      total,
+      segments: raw.map((s) => ({
+        ...s,
+        color: BREAKDOWN_COLORS[s.label],
+        percent: total ? Math.round((s.value / total) * 100) : 0,
+      })),
+    };
+  }, [kpis]);
+
+  const buckets = useMemo(() => {
+    const counts = Object.fromEntries(KITCHEN_BUCKETS.map((b) => [b.key, 0]));
+    for (const o of liveOrders) {
+      if (counts[o.status] !== undefined) counts[o.status] += 1;
+    }
+    return counts;
+  }, [liveOrders]);
+
+  const queue = useMemo(
+    () => liveOrders.filter((o) => KITCHEN_BUCKETS.some((b) => b.key === o.status)),
+    [liveOrders],
   );
 
-  const table = useReactTable({
-    data: queue,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
-
-  if (error) {
+  if (!restaurantId) {
     return (
-      <DashboardLayout profile={MANAGER_PROFILE}>
-        <p className="text-muted-foreground">Failed to load: {error}</p>
+      <DashboardLayout>
+        <p className="text-muted-foreground">
+          No restaurant is linked to this account yet.
+        </p>
       </DashboardLayout>
     );
   }
-  if (!data) {
+
+  if (isError) {
     return (
-      <DashboardLayout profile={MANAGER_PROFILE}>
+      <DashboardLayout>
+        <p className="text-brand-maroon">Failed to load: {error.message}</p>
+      </DashboardLayout>
+    );
+  }
+
+  if (kpisLoading || !kpis) {
+    return (
+      <DashboardLayout>
         <p className="text-muted-foreground">Loading dashboard…</p>
       </DashboardLayout>
     );
   }
 
-  const { stats, orderBreakdown, kitchen, topSelling, recentOrders } = data;
-
   return (
-    <DashboardLayout profile={MANAGER_PROFILE}>
-      {/* Stat cards — manager view omits Revenue. */}
+    <DashboardLayout>
+      {/* Stat cards — manager view omits revenue. */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard title="Total Orders" value={stats.totalOrders.value} caption="Orders today" />
-        <StatCard title="Live Monitoring" value={stats.liveMonitoring.value} caption={stats.liveMonitoring.caption} />
-        <StatCard title="Average Rating" value={stats.averageRating.value} caption={stats.averageRating.caption} stars />
+        <StatCard title="Total Orders" value={kpis.orders ?? 0} caption="Orders today" />
+        <StatCard
+          title="Cancelled"
+          value={kpis.cancelledOrders ?? 0}
+          caption="Cancelled today"
+        />
+        <StatCard
+          title="Average Rating"
+          value={restaurant?.avgRating ?? "—"}
+          caption={`${restaurant?.totalRatings ?? 0} ratings`}
+          stars={restaurant?.avgRating ?? 0}
+        />
       </section>
 
-      {/* Order Weekly Breakdown — full-width donut. */}
+      {/* Order breakdown */}
       <Card>
-        <CardHeader className="flex-row items-start justify-between space-y-0 pb-4">
-          <h2 className="text-base font-bold">Order Weekly Breakdown</h2>
-          <PeriodDropdown />
+        <CardHeader className="pb-4">
+          <h2 className="text-base font-bold">Order Breakdown — Today</h2>
         </CardHeader>
         <CardContent>
-          <div className="relative mx-auto h-[200px] w-[200px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={orderBreakdown.segments}
-                  dataKey="value"
-                  nameKey="label"
-                  innerRadius={64}
-                  outerRadius={96}
-                  paddingAngle={2}
-                  startAngle={90}
-                  endAngle={-270}
-                  stroke="none"
-                >
-                  {orderBreakdown.segments.map((s) => (
-                    <Cell key={s.label} fill={s.color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v, n) => [`${v}`, n]} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-              <strong className="text-3xl font-bold">{orderBreakdown.total}</strong>
-              <span className="text-[11px] text-muted-foreground">Total Orders</span>
-            </div>
-          </div>
-
-          <p className="mb-3 mt-2 text-[13px] font-semibold">Order Status Breakdown</p>
-          <div className="grid grid-cols-1 gap-x-8 gap-y-2.5 sm:grid-cols-2">
-            {orderBreakdown.segments.map((s) => (
-              <div key={s.label} className="flex items-center gap-2 text-xs">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: s.color }} />
-                <span className="text-muted-foreground">{s.label}</span>
-                <span className="ml-auto font-semibold">{s.value} ({s.percent}%)</span>
+          {breakdown.total === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              No orders recorded today yet.
+            </p>
+          ) : (
+            <>
+              <div className="relative mx-auto h-[200px] w-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={breakdown.segments}
+                      dataKey="value"
+                      nameKey="label"
+                      innerRadius={64}
+                      outerRadius={96}
+                      paddingAngle={2}
+                      startAngle={90}
+                      endAngle={-270}
+                      stroke="none"
+                    >
+                      {breakdown.segments.map((s) => (
+                        <Cell key={s.label} fill={s.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v, n) => [`${v}`, n]} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <strong className="text-3xl font-bold">{breakdown.total}</strong>
+                  <span className="text-[11px] text-muted-foreground">Total Orders</span>
+                </div>
               </div>
-            ))}
-          </div>
+
+              <p className="mb-3 mt-2 text-[13px] font-semibold">Order Status Breakdown</p>
+              <div className="grid grid-cols-1 gap-x-8 gap-y-2.5 sm:grid-cols-2">
+                {breakdown.segments.map((s) => (
+                  <div key={s.label} className="flex items-center gap-2 text-xs">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: s.color }} />
+                    <span className="text-muted-foreground">{s.label}</span>
+                    <span className="ml-auto font-semibold">{s.value} ({s.percent}%)</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 
       {/* Live kitchen activity */}
       <Card>
-        <CardHeader className="flex-row items-start justify-between space-y-0 pb-4">
-          <div>
-            <h2 className="flex items-center gap-2 text-base font-bold">
-              <Flame className="h-4 w-4 text-brand-orange" /> Live Kitchen Activity
-            </h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Manage active orders and preparation queue
-            </p>
-          </div>
-          <button type="button" className="text-[13px] font-semibold text-brand-orange">
-            View Display →
-          </button>
+        <CardHeader className="pb-4">
+          <h2 className="flex items-center gap-2 text-base font-bold">
+            <Flame className="h-4 w-4 text-brand-orange" /> Live Kitchen Activity
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Active orders and preparation queue
+          </p>
         </CardHeader>
         <CardContent>
           <div className="mb-5 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-            {kitchen.pills.map((pill) => (
-              <div key={pill.label} className="rounded-xl border border-brand-cream/60 bg-[#fffaf7] p-3.5">
+            {KITCHEN_BUCKETS.map((bucket) => (
+              <div
+                key={bucket.key}
+                className="rounded-xl border border-brand-cream/60 bg-[#fffaf7] p-3.5"
+              >
                 <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{pill.label}</span>
+                  <span>{bucket.label}</span>
                   <span className="rounded-md bg-brand-orange/10 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-brand-orange">
-                    {pill.tag}
+                    {bucket.tag}
                   </span>
                 </div>
-                <strong className="text-2xl font-bold">{pill.value}</strong>
+                <strong className="text-2xl font-bold">{buckets[bucket.key]}</strong>
               </div>
             ))}
           </div>
 
           <h3 className="mb-1 text-sm font-bold">Current Kitchen Queue</h3>
-          <Table>
-            <TableHeader>
-              {table.getHeaderGroups().map((hg) => (
-                <TableRow key={hg.id} className="border-brand-cream/60">
-                  {hg.headers.map((header) => (
-                    <TableHead key={header.id}>
-                      {flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  ))}
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-brand-cream/60">
+                  <TableHead>Order</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Items</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Placed</TableHead>
                 </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+              </TableHeader>
+              <TableBody>
+                {queue.map((o) => (
+                  <TableRow key={o._id}>
+                    <TableCell className="font-semibold">
+                      #{String(o._id).slice(-6).toUpperCase()}
                     </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    <TableCell className="capitalize text-muted-foreground">
+                      {(o.type ?? "").replace("_", " ") || "—"}
+                    </TableCell>
+                    <TableCell className="max-w-[280px] truncate">{itemSummary(o)}</TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(o.status)} className="capitalize">
+                        {o.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatTime(o.createdAt)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {queue.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                      Kitchen queue is clear.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
       {/* Top selling + recent orders */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader className="flex-row items-start justify-between space-y-0 pb-4">
+          <CardHeader className="pb-4">
             <h2 className="text-base font-bold">Top Selling Items</h2>
-            <button type="button" className="text-[13px] font-semibold text-brand-orange">
-              View All
-            </button>
           </CardHeader>
           <CardContent>
-            {topSelling.map((item, i) => (
+            {topItems.map((item) => (
               <div
-                key={`${item.name}-${i}`}
+                key={item.menuItemId}
                 className="flex items-center gap-3 border-b border-[#F6EFE9] py-3 last:border-0"
               >
                 <span className="h-11 w-11 shrink-0 rounded-[10px] bg-gradient-to-br from-brand-saffron to-brand-red" />
-                <div className="flex flex-col">
-                  <span className="font-semibold">{item.name}</span>
-                  <span className="text-xs text-muted-foreground">{item.orders}</span>
+                <div className="flex min-w-0 flex-col">
+                  <span className="truncate font-semibold">{item.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {item.totalQuantity} sold
+                  </span>
                 </div>
-                <span className="ml-auto font-bold text-brand-red">{item.price}</span>
+                <span className="ml-auto shrink-0 font-bold text-brand-red">
+                  ₹{Number(item.totalRevenue ?? 0).toLocaleString("en-IN")}
+                </span>
               </div>
             ))}
+            {topItems.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">No sales data yet.</p>
+            ) : null}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex-row items-start justify-between space-y-0 pb-4">
+          <CardHeader className="pb-4">
             <h2 className="text-base font-bold">Recent Orders</h2>
-            <button type="button" className="text-[13px] font-semibold text-brand-orange">
-              View All Orders
-            </button>
           </CardHeader>
           <CardContent>
             {recentOrders.map((order) => (
               <div
-                key={order.id}
+                key={order._id}
                 className="flex items-center justify-between gap-3 border-b border-[#F6EFE9] py-3.5 last:border-0"
               >
-                <div className="flex flex-col gap-1">
+                <div className="flex min-w-0 flex-col gap-1">
                   <div className="flex items-center gap-2.5">
-                    <span className="font-semibold">{order.id}</span>
-                    <span className="text-xs text-muted-foreground">{order.time}</span>
+                    <span className="font-semibold">
+                      #{String(order._id).slice(-6).toUpperCase()}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {formatTime(order.createdAt)}
+                    </span>
                   </div>
-                  <span className="text-xs text-muted-foreground">{order.items}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {itemSummary(order)}
+                  </span>
                 </div>
-                <Badge variant={statusVariant(order.status)}>{order.status}</Badge>
+                <Badge variant={statusVariant(order.status)} className="shrink-0 capitalize">
+                  {order.status}
+                </Badge>
               </div>
             ))}
+            {recentOrders.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">No orders yet.</p>
+            ) : null}
           </CardContent>
         </Card>
       </section>

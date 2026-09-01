@@ -3,7 +3,7 @@ import { Pencil, Plus, Search, UtensilsCrossed } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
-import { useMenuItems, useToggleMenuItem } from "@/hooks/owner/useMenuItems";
+import { useCategories, useMenuItems, useToggleMenuItem } from "@/hooks/owner/useMenuItems";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,17 +28,24 @@ export default function MenuItems() {
   const [status, setStatus]     = useState("all");
 
   const { data: items = [], isLoading, isError } = useMenuItems(restaurantId);
+  const { data: categoryList = [] } = useCategories(restaurantId);
   const toggleMutation = useToggleMenuItem(restaurantId);
 
-  const categories = useMemo(() => {
-    const set = new Set(items.map((i) => i.categoryId?.name ?? ""));
-    return ["all", ...set].filter(Boolean);
-  }, [items]);
+  // Items carry `categoryId` as a raw id, so resolve names from the category list.
+  const categoryNameById = useMemo(
+    () => Object.fromEntries(categoryList.map((c) => [c._id, c.name])),
+    [categoryList],
+  );
+
+  const categories = useMemo(
+    () => ["all", ...categoryList.map((c) => c.name).filter(Boolean)],
+    [categoryList],
+  );
 
   const visible = useMemo(() =>
     items.filter((i) => {
       const name = i.name?.toLowerCase() ?? "";
-      const cat  = i.categoryId?.name ?? "";
+      const cat  = categoryNameById[i.categoryId] ?? "";
       const matchSearch   = name.includes(search.toLowerCase());
       const matchCategory = category === "all" || cat === category;
       const matchStatus   = status === "all"
@@ -46,7 +53,7 @@ export default function MenuItems() {
         || (status === "unavailable" && !i.isAvailable);
       return matchSearch && matchCategory && matchStatus;
     }),
-  [items, search, category, status]);
+  [items, search, category, status, categoryNameById]);
 
   if (isError) {
     return (
@@ -155,7 +162,7 @@ export default function MenuItems() {
                 <div>
                   <h3 className="font-bold leading-tight">{mi.name}</h3>
                   <p className="text-xs text-muted-foreground">
-                    {mi.categoryId?.name ?? ""}
+                    {categoryNameById[mi.categoryId] ?? "Uncategorised"}
                   </p>
                 </div>
                 <button
@@ -170,7 +177,7 @@ export default function MenuItems() {
               <div className="flex items-center justify-between">
                 <div className="flex flex-col">
                   <span className="font-bold text-brand-red">
-                    ₹{mi.discountedPrice ?? mi.sellingPrice}
+                    ₹{mi.effectivePrice ?? mi.discountedPrice ?? mi.sellingPrice}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {mi.prepTime ? `${mi.prepTime} min` : ""}

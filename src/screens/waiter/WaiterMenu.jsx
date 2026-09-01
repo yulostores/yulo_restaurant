@@ -1,42 +1,33 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+// Waiter menu — GET /api/staff/:rId/waiter/menu, then
+// POST /api/staff/:rId/waiter/orders against the active table session.
+
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Search, Star, UtensilsCrossed, UserRound } from "lucide-react";
+import { Search, Send, UtensilsCrossed } from "lucide-react";
 
 import { useStaffAuth } from "@/context/StaffAuthContext";
-import { useWaiterMenu } from "@/hooks/staff/useWaiter";
-import client from "@/api/client";
+import { useCreateOrder, useWaiterMenu } from "@/hooks/staff/useWaiter";
+import { useRestaurant } from "@/hooks/customer/useMenu";
 import { cn } from "@/lib/utils";
 import WaiterLayout, { formatPrice } from "./WaiterLayout";
 import { useWaiter } from "./WaiterApp";
 
-/* ── Normalize backend item → UI item ──────────────────────────────── */
-function normalizeItem(raw, categoryName) {
-  return {
-    id:          raw._id?.toString() ?? raw.id,
-    name:        raw.name,
-    description: raw.description ?? "",
-    image:       raw.image ?? null,
-    // backend: "veg" | "non_veg" | "egg"  →  UI: "veg" | "non-veg" | "egg"
-    foodType:    raw.foodType === "non_veg" ? "non-veg" : raw.foodType,
-    price:       raw.discountedPrice ?? raw.sellingPrice ?? 0,
-    available:   raw.isAvailable ?? true,
-    category:    categoryName,
-    popular:     false,
-    rating:      0,
-  };
-}
-
+/* ── Flatten the category tree, tagging each item with its category ── */
 function flattenMenu(categories = []) {
   const items = [];
   for (const cat of categories) {
     const catName = cat.name ?? "";
-    for (const item of cat.items ?? []) items.push(normalizeItem(item, catName));
-    for (const sub  of cat.subCategories ?? []) {
-      for (const item of sub.items ?? []) items.push(normalizeItem(item, catName));
+    for (const item of cat.items ?? []) items.push({ ...item, category: catName });
+    for (const sub of cat.subCategories ?? []) {
+      for (const item of sub.items ?? []) items.push({ ...item, category: catName });
     }
   }
   return items;
+}
+
+// The server's foodType vocabulary.
+function priceOf(item) {
+  return item.effectivePrice ?? item.discountedPrice ?? item.sellingPrice ?? 0;
 }
 
 /* ── food-type dot ── */
@@ -48,10 +39,10 @@ function FoodDot({ type }) {
         <span className="h-2 w-2 rounded-full bg-green-600" />
       </span>
     );
-  if (t === "vegan")
+  if (t === "egg")
     return (
-      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-green-500">
-        <span className="h-2 w-2 rounded-full bg-green-500" />
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-yellow-500">
+        <span className="h-2 w-2 rounded-full bg-yellow-400" />
       </span>
     );
   return (
@@ -65,7 +56,7 @@ function FoodDot({ type }) {
 const FOOD_FILTERS = [
   { key: "all",     label: "All",     icon: <span className="h-2 w-2 rounded-full bg-white" /> },
   { key: "veg",     label: "Veg",     icon: <span className="h-2 w-2 rounded-full bg-green-500" /> },
-  { key: "non-veg", label: "Non Veg", icon: <span className="h-2 w-2 rounded-full bg-brand-maroon" /> },
+  { key: "non_veg", label: "Non Veg", icon: <span className="h-2 w-2 rounded-full bg-brand-maroon" /> },
   { key: "egg",     label: "Egg",     icon: <span className="h-2 w-2 rounded-full bg-yellow-400" /> },
 ];
 
@@ -76,11 +67,11 @@ function matchesFoodFilter(item, key) {
 
 function itemTags(item) {
   const tags = [];
-  if (item.popular) tags.push("Popular");
   const t = (item.foodType ?? "").toLowerCase();
   if (t === "veg")     tags.push("Veg");
-  if (t === "non-veg") tags.push("Non Veg");
+  if (t === "non_veg") tags.push("Non Veg");
   if (t === "egg")     tags.push("Egg");
+  if (item.prepTime)   tags.push(`${item.prepTime} min`);
   return tags.slice(0, 3);
 }
 
@@ -91,8 +82,8 @@ function ItemCard({ item, inCart, onAdd, onRemove }) {
     <div
       className={cn(
         "flex gap-3 rounded-2xl border border-white bg-white p-3.5 shadow-sm transition",
-        !item.available && "opacity-60",
-        item.available && "hover:shadow-md",
+        item.isAvailable === false && "opacity-60",
+        item.isAvailable !== false && "hover:shadow-md",
       )}
     >
       <div className="relative h-[90px] w-[90px] shrink-0 overflow-hidden rounded-xl bg-brand-cream/40">
@@ -132,13 +123,13 @@ function ItemCard({ item, inCart, onAdd, onRemove }) {
         </div>
 
         <div className="flex items-center justify-between">
-          <p className="text-base font-bold text-[#24190f]">{formatPrice(item.price)}</p>
-          {item.available ? (
+          <p className="text-base font-bold text-[#24190f]">{formatPrice(priceOf(item))}</p>
+          {item.isAvailable !== false ? (
             inCart > 0 ? (
               <div className="flex items-center gap-0 overflow-hidden rounded-full bg-brand-gradient">
                 <button
                   type="button"
-                  onClick={() => onRemove(item.id)}
+                  onClick={() => onRemove(item._id)}
                   className="px-3 py-1.5 text-lg font-bold leading-none text-white transition hover:bg-white/10 active:scale-95"
                 >
                   −
@@ -185,9 +176,9 @@ function MenuSection({ title, items, cart, onAdd, onRemove }) {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {items.map((item) => (
           <ItemCard
-            key={item.id}
+            key={item._id}
             item={item}
-            inCart={cart.find((c) => c.id === item.id)?.quantity ?? 0}
+            inCart={cart.find((c) => c.menuItemId === item._id)?.quantity ?? 0}
             onAdd={onAdd}
             onRemove={onRemove}
           />
@@ -200,41 +191,60 @@ function MenuSection({ title, items, cart, onAdd, onRemove }) {
 /* ── Main ── */
 export default function WaiterMenu() {
   const navigate = useNavigate();
-  const { activeTable, cart, cartCount, subtotal, addToCart, setQuantity } = useWaiter();
+  const { activeTable, cart, cartCount, subtotal, addToCart, setQuantity, clearCart } = useWaiter();
   const { staff } = useStaffAuth();
+  const restaurantId = staff?.restaurantId;
 
-  function removeOne(itemId) {
-    const line = cart.find((c) => c.id === itemId);
-    if (line) setQuantity(itemId, line.quantity - 1);
-  }
-
-  const { data: menuData, isLoading, isError } = useWaiterMenu(staff?.restaurantId);
-
-  // Fetch restaurant name for the header
-  const { data: restaurant } = useQuery({
-    queryKey: ["restaurant-public", staff?.restaurantId],
-    queryFn: () =>
-      client
-        .get(`/restaurants/${staff?.restaurantId}`)
-        .then((r) => r.data.data.restaurant),
-    enabled: !!staff?.restaurantId,
-    staleTime: 30 * 60_000,
-  });
-
-  // Flatten categories → normalized items
-  const rawCategories = menuData?.menu ?? [];
-  const categoryNames = rawCategories.map((c) => c.name).filter(Boolean);
-  const allItems = useMemo(() => flattenMenu(rawCategories), [menuData]);
+  const { data: menu = [], isLoading, isError } = useWaiterMenu(restaurantId);
+  // Public endpoint — readable with a staff token.
+  const { data: restaurant } = useRestaurant(restaurantId);
+  const { mutateAsync: createOrder, isPending: placing } = useCreateOrder(restaurantId);
 
   const [search, setSearch]                 = useState("");
   const [activeCategory, setActiveCategory] = useState("");
   const [foodFilter, setFoodFilter]         = useState("all");
   const [showSearch, setShowSearch]         = useState(false);
+  const [orderError, setOrderError]         = useState("");
+  const [note, setNote]                     = useState("");
 
-  // Set first category once data loads
-  useMemo(() => {
+  const categoryNames = useMemo(
+    () => menu.map((c) => c.name).filter(Boolean),
+    [menu],
+  );
+  const allItems = useMemo(() => flattenMenu(menu), [menu]);
+
+  function removeOne(menuItemId) {
+    const line = cart.find((c) => c.menuItemId === menuItemId);
+    if (line) setQuantity(menuItemId, line.quantity - 1);
+  }
+
+  // Select the first category once the menu lands.
+  useEffect(() => {
     if (!activeCategory && categoryNames.length > 0) setActiveCategory(categoryNames[0]);
-  }, [categoryNames.length]);
+  }, [categoryNames, activeCategory]);
+
+  async function placeOrder() {
+    if (!activeTable?.sessionId) {
+      setOrderError("Scan a table QR first — orders are placed against an open session.");
+      return;
+    }
+    setOrderError("");
+    try {
+      await createOrder({
+        tableSessionId: activeTable.sessionId,
+        items: cart.map((line) => ({
+          menuItemId: line.menuItemId,
+          quantity: line.quantity,
+        })),
+        ...(note.trim() ? { specialInstructions: note.trim() } : {}),
+      });
+      clearCart();
+      setNote("");
+      navigate("/waiter");
+    } catch (err) {
+      setOrderError(err.message);
+    }
+  }
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -264,7 +274,8 @@ export default function WaiterMenu() {
               {restaurant?.name ?? "Menu"}
             </p>
             <p className="flex items-center gap-1 text-xs text-muted-foreground">
-              <UtensilsCrossed className="h-3 w-3" /> Table {activeTable}
+              <UtensilsCrossed className="h-3 w-3" />
+              {activeTable ? `Table ${activeTable.identifier}` : "No table selected"}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -352,7 +363,7 @@ export default function WaiterMenu() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="rounded-2xl border border-brand-cream/60 bg-white py-14 text-center text-sm text-muted-foreground">
-            {allItems.length === 0 ? "Menu abhi empty hai." : "No items match this filter."}
+            {allItems.length === 0 ? "No menu published yet." : "No items match this filter."}
           </div>
         ) : (
           <MenuSection
@@ -365,22 +376,35 @@ export default function WaiterMenu() {
         )}
       </div>
 
-      {/* ── Floating cart bar ── */}
+      {/* ── Floating order bar ── */}
       {cartCount > 0 && (
-        <div className="fixed bottom-[64px] left-0 right-0 z-40 px-4 pb-2">
+        <div className="fixed bottom-[64px] left-0 right-0 z-40 space-y-2 px-4 pb-2">
+          {orderError ? (
+            <p className="rounded-xl bg-[#FCE9E4] px-4 py-2 text-sm text-brand-maroon shadow">
+              {orderError}
+            </p>
+          ) : null}
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Note for the kitchen (optional)"
+            className="w-full rounded-xl border border-brand-cream bg-white px-3 py-2 text-sm outline-none focus:border-brand-orange"
+          />
           <div className="flex items-center justify-between rounded-2xl bg-brand-gradient px-5 py-3.5 shadow-lg">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-white/80">
-                {cartCount} item{cartCount === 1 ? "" : "s"} added
+                {cartCount} item{cartCount === 1 ? "" : "s"}
+                {activeTable ? ` · Table ${activeTable.identifier}` : ""}
               </p>
               <p className="text-lg font-bold text-white">{formatPrice(subtotal)}</p>
             </div>
             <button
               type="button"
-              onClick={() => navigate("/waiter")}
-              className="flex items-center gap-2 rounded-xl bg-white/20 px-4 py-2 text-sm font-bold text-white backdrop-blur transition hover:bg-white/30"
+              onClick={placeOrder}
+              disabled={placing}
+              className="flex items-center gap-2 rounded-xl bg-white/20 px-4 py-2 text-sm font-bold text-white backdrop-blur transition hover:bg-white/30 disabled:opacity-60"
             >
-              View Cart <ArrowRight className="h-4 w-4" />
+              {placing ? "Sending…" : "Send to kitchen"} <Send className="h-4 w-4" />
             </button>
           </div>
         </div>

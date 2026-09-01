@@ -3,21 +3,18 @@ import { authApi } from "@/api/auth.api";
 import { ownerApi } from "@/api/owner.api";
 import { setAccessToken, getAccessToken } from "@/api/client";
 
+// Owner auth uses the owner-only endpoints: POST /api/owner/auth/{signup,login,logout}.
+// A customer or admin account is rejected there with 401 INVALID_CREDENTIALS.
+// Refresh is the shared POST /api/auth/refresh (keys off the refreshToken cookie).
+//
+// Access token stays in memory; only non-sensitive display data is persisted.
+
 const PROFILE_KEY = "yulo_owner_profile";
 const RESTAURANT_KEY = "yulo_owner_restaurant";
 
-function readProfile() {
+function readJson(key) {
   try {
-    const raw = localStorage.getItem(PROFILE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function readRestaurant() {
-  try {
-    const raw = localStorage.getItem(RESTAURANT_KEY);
+    const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -27,11 +24,10 @@ function readRestaurant() {
 const OwnerAuthContext = createContext(null);
 
 export function OwnerAuthProvider({ children }) {
-  const [user, setUser] = useState(() => readProfile());
-  const [restaurant, setRestaurant] = useState(() => readRestaurant());
+  const [user, setUser] = useState(() => readJson(PROFILE_KEY));
+  const [restaurant, setRestaurant] = useState(() => readJson(RESTAURANT_KEY));
   const [loading, setLoading] = useState(true);
 
-  // Persist restaurant to localStorage whenever it changes
   useEffect(() => {
     if (restaurant) localStorage.setItem(RESTAURANT_KEY, JSON.stringify(restaurant));
     else localStorage.removeItem(RESTAURANT_KEY);
@@ -42,7 +38,8 @@ export function OwnerAuthProvider({ children }) {
     else localStorage.removeItem(PROFILE_KEY);
   }, [user]);
 
-  // On mount: if profile exists but token is gone (page refresh), silently refresh
+  // On mount: profile exists but the in-memory token is gone (page refresh) —
+  // silently mint a new access token from the refresh cookie.
   useEffect(() => {
     if (user && !getAccessToken()) {
       authApi.refresh()
@@ -59,8 +56,8 @@ export function OwnerAuthProvider({ children }) {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // After we have a token and no restaurant yet, fetch the owner's restaurants
-  // and pick the first one. This covers both initial login and page refresh.
+  // Once we have a token and no restaurant selected, load the owner's
+  // restaurants and pick the first. Covers both login and page refresh.
   useEffect(() => {
     if (!user || !getAccessToken() || restaurant) return;
 
@@ -69,10 +66,9 @@ export function OwnerAuthProvider({ children }) {
         const list = data.data.restaurants ?? [];
         if (list.length > 0) setRestaurant(list[0]);
       })
-      .catch(() => { /* non-critical — dashboard will handle empty state */ });
+      .catch(() => { /* non-critical — screens render their empty state */ });
   }, [user, restaurant]);
 
-  // ── fetchRestaurants: exposed so owner dashboard can trigger a re-fetch
   const fetchRestaurants = useCallback(async () => {
     const { data } = await ownerApi.listRestaurants();
     const list = data.data.restaurants ?? [];
@@ -81,11 +77,10 @@ export function OwnerAuthProvider({ children }) {
   }, []);
 
   const login = useCallback(async ({ email, password }) => {
-    const { data } = await authApi.login({ email, password });
+    const { data } = await authApi.ownerLogin({ email, password });
     const { user: u, accessToken } = data.data;
     setAccessToken(accessToken);
     setUser(u);
-    // Fetch restaurants immediately after login
     try {
       const { data: rData } = await ownerApi.listRestaurants();
       const list = rData.data.restaurants ?? [];
@@ -94,16 +89,18 @@ export function OwnerAuthProvider({ children }) {
     return u;
   }, []);
 
-  const signup = useCallback(async ({ name, email, password }) => {
-    const { data } = await authApi.signup({ name, email, password, role: "restaurant_owner" });
+  const signup = useCallback(async ({ name, email, password, phone }) => {
+    const { data } = await authApi.ownerSignup({ name, email, password, phone });
     const { user: u, accessToken } = data.data;
     setAccessToken(accessToken);
     setUser(u);
+    // A fresh owner has no restaurant yet — StoreSettings prompts them to
+    // submit one for admin review.
     return u;
   }, []);
 
   const logout = useCallback(async () => {
-    try { await authApi.logout(); } catch { /* silent */ }
+    try { await authApi.ownerLogout(); } catch { /* silent */ }
     setAccessToken(null);
     setUser(null);
     setRestaurant(null);
@@ -115,6 +112,9 @@ export function OwnerAuthProvider({ children }) {
         user,
         restaurant,
         restaurantId: restaurant?._id ?? null,
+        // "pending" | "active" | "suspended" | "rejected" | "expired"
+        approvalStatus: restaurant?.approvalStatus ?? null,
+        isApproved: restaurant?.approvalStatus === "active",
         loading,
         login,
         signup,
@@ -134,7 +134,7 @@ export function useOwnerAuth() {
   return ctx;
 }
 
-// Safe version — returns null when called outside OwnerAuthProvider (e.g. manager screens)
+// Safe version — returns null outside the provider.
 export function useOwnerAuthSafe() {
   return useContext(OwnerAuthContext);
 }

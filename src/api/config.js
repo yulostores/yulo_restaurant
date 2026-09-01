@@ -1,17 +1,15 @@
-// Central switches for the data layer.
+// Central config for the data layer.
 //
-// VITE_USE_MOCKS controls whether the app talks to the in-app mock backend
-// (src/mocks) or the real server. It defaults to ON so the frontend works
-// with zero backend running — flip it to "false" once the real APIs are ready.
+// The app talks to the real backend only — there is no mock/fixture path.
+// See API.md for the full endpoint contract.
 //
 //   .env / .env.local:
-//     VITE_USE_MOCKS=true     -> use mock JSON (default)
-//     VITE_USE_MOCKS=false    -> use the real backend
-//     VITE_MOCK_LATENCY=250   -> fake network delay in ms
-//     VITE_API_BASE=          -> prefix for real requests (proxy handles "" )
-
-export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== "false";
-
-export const MOCK_LATENCY_MS = Number(import.meta.env.VITE_MOCK_LATENCY ?? 250);
+//     VITE_API_BASE=            -> blank uses the Vite dev proxy (vite.config.js)
+//     VITE_API_BASE=https://api.example.com
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+// Socket.IO origin. Defaults to API_BASE, falling back to the page origin so the
+// dev proxy handles it.
+export const SOCKET_URL =
+  import.meta.env.VITE_SOCKET_URL ?? API_BASE ?? "";

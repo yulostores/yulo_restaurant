@@ -18,9 +18,11 @@ function RoleBadge({ role }) {
 }
 
 export default function StaffManagement() {
-  const { restaurantId } = useOwnerAuth();
+  const { restaurantId, approvalStatus, isApproved } = useOwnerAuth();
 
-  const { data: staff = [], isLoading } = useStaff(restaurantId);
+  // Every /staff route returns 403 RESTAURANT_NOT_APPROVED until an admin
+  // approves the restaurant, so surface that before the forms.
+  const { data: staff = [], isLoading, isError, error } = useStaff(restaurantId);
   const createMutation  = useCreateStaff(restaurantId);
   const removeMutation  = useRemoveStaff(restaurantId);
   const updateMutation  = useUpdateStaff(restaurantId);
@@ -37,7 +39,7 @@ export default function StaffManagement() {
     e.preventDefault();
     setFormError("");
     if (form.pin.length < 4) {
-      setFormError("PIN kam se kam 4 digits ka hona chahiye");
+      setFormError("PIN must be at least 4 digits");
       return;
     }
     try {
@@ -63,7 +65,7 @@ export default function StaffManagement() {
   }
 
   async function handleRemove(staffId) {
-    if (!window.confirm("Is staff member ko remove karna chahte ho?")) return;
+    if (!window.confirm("Deactivate this staff member? They will no longer be able to sign in.")) return;
     try {
       await removeMutation.mutateAsync(staffId);
     } catch { /* silent */ }
@@ -77,9 +79,20 @@ export default function StaffManagement() {
       <div>
         <h1 className="text-2xl font-bold">Staff Management</h1>
         <p className="text-sm text-muted-foreground">
-          Chef aur Waiter add karo. Login ke liye Restaurant ID + PIN chahiye.
+          Add chefs and waiters. They sign in with this Restaurant ID and their PIN.
         </p>
       </div>
+
+      {approvalStatus && !isApproved ? (
+        <div className="rounded-2xl border border-brand-cream bg-[#FFF3E0] px-4 py-3 text-sm text-[#8a4b16]">
+          <strong className="capitalize">{approvalStatus}</strong> — staff management unlocks
+          once a platform admin approves this restaurant.
+        </div>
+      ) : null}
+
+      {isError ? (
+        <p className="rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{error.message}</p>
+      ) : null}
 
       {/* Add Staff Form */}
       <Card>
@@ -91,7 +104,7 @@ export default function StaffManagement() {
         <CardContent>
           <form onSubmit={handleAdd} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Naam *</label>
+              <label className="text-sm font-medium">Name *</label>
               <input
                 name="name"
                 value={form.name}
@@ -153,7 +166,7 @@ export default function StaffManagement() {
 
             <div className="col-span-full">
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? "Adding…" : "Staff Add Karo"}
+                {createMutation.isPending ? "Adding…" : "Add staff member"}
               </Button>
             </div>
           </form>
@@ -162,10 +175,10 @@ export default function StaffManagement() {
 
       {/* Staff Login Info */}
       <div className="rounded-xl border border-border bg-muted/40 px-5 py-4 text-sm">
-        <p className="font-semibold">Staff Login kaise kare?</p>
+        <p className="font-semibold">How staff sign in</p>
         <p className="mt-1 text-muted-foreground">
           URL: <span className="font-mono font-medium">/staff/login</span> &nbsp;→&nbsp;
-          Restaurant ID: <span className="font-mono font-medium select-all">{restaurantId ?? "—"}</span> &nbsp;+&nbsp; uska PIN
+          Restaurant ID: <span className="font-mono font-medium select-all">{restaurantId ?? "—"}</span> &nbsp;+&nbsp; their PIN
         </p>
       </div>
 
@@ -183,7 +196,7 @@ export default function StaffManagement() {
               <ChefHat className="h-4 w-4" /> Chefs ({chefs.length})
             </h2>
             {chefs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Koi chef nahi hai abhi.</p>
+              <p className="text-sm text-muted-foreground">No chefs added yet.</p>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {chefs.map((s) => (
@@ -206,7 +219,7 @@ export default function StaffManagement() {
               <UtensilsCrossed className="h-4 w-4" /> Waiters ({waiters.length})
             </h2>
             {waiters.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Koi waiter nahi hai abhi.</p>
+              <p className="text-sm text-muted-foreground">No waiters added yet.</p>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {waiters.map((s) => (
@@ -232,14 +245,7 @@ function StaffCard({ member, onToggle, onRemove, updatePending, removePending })
   return (
     <div className="flex items-start justify-between rounded-2xl border border-border bg-card px-4 py-3">
       <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="truncate font-semibold">{member.name}</p>
-          {member.staffCode && (
-            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-bold">
-              {member.staffCode}
-            </span>
-          )}
-        </div>
+        <p className="truncate font-semibold">{member.name}</p>
         {member.email && (
           <p className="truncate text-xs text-muted-foreground">{member.email}</p>
         )}

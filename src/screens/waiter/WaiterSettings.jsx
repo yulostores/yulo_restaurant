@@ -25,8 +25,8 @@ export default function WaiterSettings() {
             </span>
             <div>
               <p className="text-lg font-bold">{staff?.name ?? "Waiter"}</p>
-              <p className="text-sm text-muted-foreground">
-                Waiter · Code {staff?.staffCode ?? "—"}
+              <p className="text-sm capitalize text-muted-foreground">
+                {staff?.role ?? "waiter"}
               </p>
             </div>
           </div>

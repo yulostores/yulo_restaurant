@@ -1,137 +1,144 @@
-// Live order status — polls the order and renders a step tracker that mirrors
-// the restaurant workflow (PRD §9 lifecycle, §18 NOTIF-03). Reflects the same
-// status the owner/chef/waiter advance, so the demo loop is end-to-end.
+// Live order tracking — GET /api/orders/:id, polled while the order is open.
+// The steps mirror the order lifecycle the API documents.
 
-import { useNavigate, useParams } from "react-router-dom";
-import { Check, Clock, XCircle } from "lucide-react";
+import { useParams } from "react-router-dom";
+import { Check, XCircle } from "lucide-react";
 
-import { useCustomerOrder } from "@/hooks/customer/useCustomerOrders";
 import { cn } from "@/lib/utils";
+import { useCustomerOrder } from "@/hooks/customer/useCustomerOrders";
 import CustomerLayout, { formatPrice } from "./CustomerLayout";
 
+// Terminal states stop the poll.
+const DONE = ["delivered", "cancelled"];
+
 const STEPS = [
-  { key: "new", label: "Order Placed", note: "We've received your order." },
-  { key: "accepted", label: "Accepted", note: "The restaurant accepted your order." },
-  { key: "preparing", label: "Preparing", note: "The kitchen is cooking your food." },
-  { key: "ready", label: "Ready to Serve", note: "Your food is ready." },
-  { key: "served", label: "Served", note: "Enjoy your meal!" },
+  { key: "placed",           label: "Order placed",   note: "We've received your order." },
+  { key: "confirmed",        label: "Confirmed",      note: "The restaurant accepted it." },
+  { key: "preparing",        label: "Preparing",      note: "Your food is being cooked." },
+  { key: "ready",            label: "Ready",          note: "Packed and ready to go." },
+  { key: "out_for_delivery", label: "Out for delivery", note: "On the way to you." },
+  { key: "delivered",        label: "Delivered",      note: "Enjoy your meal!" },
 ];
-
-const STEP_INDEX = STEPS.reduce((map, step, i) => ({ ...map, [step.key]: i }), {});
-
-function orderTotal(order) {
-  return order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-}
 
 export default function OrderStatus() {
   const { orderId } = useParams();
-  const navigate = useNavigate();
-  const { data: order, isLoading, isError } = useCustomerOrder(orderId, { pollInterval: 4000 });
+
+  const { data: order, isLoading, isError, error } = useCustomerOrder(orderId, {
+    pollInterval: 15_000,
+  });
 
   if (isError) {
     return (
-      <CustomerLayout title="Order status" showBack onBack={() => navigate("/order/menu")}>
-        <p className="px-5 py-8 text-sm text-muted-foreground">Failed to load order status.</p>
+      <CustomerLayout title="Order status" showBack>
+        <p className="px-5 py-10 text-center text-sm text-brand-maroon">
+          Couldn&apos;t load this order: {error.message}
+        </p>
       </CustomerLayout>
     );
   }
+
   if (isLoading || !order) {
     return (
-      <CustomerLayout title="Order status" showBack onBack={() => navigate("/order/menu")}>
-        <p className="px-5 py-8 text-sm text-muted-foreground">Loading…</p>
+      <CustomerLayout title="Order status" showBack>
+        <p className="px-5 py-10 text-center text-sm text-muted-foreground">Loading…</p>
       </CustomerLayout>
     );
   }
 
-  const cancelled = order.orderStatus === "cancelled" || order.orderStatus === "rejected";
-  // "completed" sits past "served" on the tracker.
-  const currentIndex =
-    order.orderStatus === "completed" ? STEPS.length - 1 : STEP_INDEX[order.orderStatus] ?? 0;
+  const cancelled = order.status === "cancelled";
+  const currentIndex = STEPS.findIndex((s) => s.key === order.status);
+  const settled = DONE.includes(order.status);
 
   return (
-    <CustomerLayout title="Order status" showBack onBack={() => navigate("/order/menu")}>
-      <div className="space-y-5 px-5 py-4">
-        <div className="rounded-2xl border border-brand-cream/70 bg-white p-4">
+    <CustomerLayout title="Order status" showBack showNav activeNav="Menu">
+      <div className="space-y-4 px-4 py-4">
+        <section className="rounded-2xl border border-brand-cream/70 bg-white p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Order #{(order._id ?? order.id ?? "").slice(-6)}</p>
-              <p className="font-semibold capitalize">
-                {order.tableNumber ? `Table ${order.tableNumber}` : order.orderType}
+              <p className="text-sm text-muted-foreground">
+                Order #{String(order._id).slice(-6).toUpperCase()}
+              </p>
+              <p className="text-lg font-bold capitalize">
+                {(order.status ?? "").replace(/_/g, " ")}
               </p>
             </div>
-            <span
-              className={cn(
-                "rounded-full px-3 py-1 text-xs font-bold capitalize",
-                cancelled ? "bg-[#FCE9E4] text-brand-maroon" : "bg-brand-orange/10 text-brand-orange",
-              )}
-            >
-              {order.orderStatus}
+            <span className="text-lg font-bold text-brand-red">
+              {formatPrice(order.subtotal)}
             </span>
           </div>
-        </div>
+          {!settled ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              This page refreshes automatically every 15 seconds.
+            </p>
+          ) : null}
+        </section>
 
         {cancelled ? (
-          <div className="flex flex-col items-center gap-3 rounded-2xl border border-brand-cream/70 bg-white p-8 text-center">
-            <XCircle className="h-12 w-12 text-brand-maroon" />
-            <p className="font-semibold">This order was {order.orderStatus}.</p>
-            <p className="text-sm text-muted-foreground">
-              Please contact restaurant staff if you need assistance.
-            </p>
-          </div>
+          <section className="flex items-start gap-3 rounded-2xl border border-brand-cream/70 bg-[#FCE9E4] p-4">
+            <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-brand-maroon" />
+            <div>
+              <p className="font-bold text-brand-maroon">Order cancelled</p>
+              <p className="text-sm text-brand-maroon/80">
+                Contact the restaurant if you weren&apos;t expecting this.
+              </p>
+            </div>
+          </section>
         ) : (
-          <div className="rounded-2xl border border-brand-cream/70 bg-white p-5">
-            <ol className="relative space-y-6">
+          <section className="rounded-2xl border border-brand-cream/70 bg-white p-4">
+            <ol className="space-y-0">
               {STEPS.map((step, i) => {
-                const done = i < currentIndex;
+                const done = currentIndex >= 0 && i <= currentIndex;
                 const active = i === currentIndex;
+                const last = i === STEPS.length - 1;
                 return (
                   <li key={step.key} className="flex gap-3">
                     <div className="flex flex-col items-center">
                       <span
                         className={cn(
-                          "grid h-8 w-8 place-items-center rounded-full border-2 transition-colors",
-                          done && "border-brand-green bg-brand-green text-white",
-                          active && "border-brand-orange bg-brand-orange/10 text-brand-orange",
-                          !done && !active && "border-brand-cream text-muted-foreground",
+                          "grid h-7 w-7 shrink-0 place-items-center rounded-full border-2 transition",
+                          done
+                            ? "border-brand-orange bg-brand-orange text-white"
+                            : "border-brand-cream bg-white text-transparent",
                         )}
                       >
-                        {done ? <Check className="h-4 w-4" /> : active ? <Clock className="h-4 w-4" /> : i + 1}
+                        <Check className="h-3.5 w-3.5" />
                       </span>
-                      {i < STEPS.length - 1 ? (
-                        <span className={cn("mt-1 h-8 w-0.5", done ? "bg-brand-green" : "bg-brand-cream")} />
+                      {!last ? (
+                        <span
+                          className={cn(
+                            "w-0.5 flex-1",
+                            done ? "bg-brand-orange" : "bg-brand-cream",
+                          )}
+                        />
                       ) : null}
                     </div>
-                    <div className="pt-1">
-                      <p className={cn("font-semibold", active && "text-brand-orange")}>{step.label}</p>
+                    <div className={cn("pb-6", last && "pb-0")}>
+                      <p className={cn("font-semibold", active && "text-brand-orange")}>
+                        {step.label}
+                      </p>
                       <p className="text-xs text-muted-foreground">{step.note}</p>
                     </div>
                   </li>
                 );
               })}
             </ol>
-          </div>
+          </section>
         )}
 
-        {/* Items */}
-        <div className="rounded-2xl border border-brand-cream/70 bg-white p-4">
-          <p className="mb-3 text-sm font-semibold">Order summary</p>
-          <div className="space-y-2">
-            {(order.items ?? []).map((item, idx) => (
-              <div key={item._id ?? item.recipeId ?? idx} className="flex justify-between text-sm">
-                <span className="text-muted-foreground">
-                  {item.quantity}× {item.name ?? item.menuItem?.name ?? item.title}
-                </span>
-                <span className="font-medium">{formatPrice((item.price ?? 0) * (item.quantity ?? 1))}</span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 flex justify-between border-t border-brand-cream/60 pt-3 font-bold">
-            <span>Total</span>
-            <span className="text-brand-red">{formatPrice(orderTotal(order))}</span>
-          </div>
-        </div>
-
-        <p className="text-center text-xs text-muted-foreground">Status refreshes automatically.</p>
+        <section className="rounded-2xl border border-brand-cream/70 bg-white p-4">
+          <p className="mb-3 text-sm font-bold">Items</p>
+          {(order.items ?? []).map((item, i) => (
+            <div
+              key={item.menuItemId ?? i}
+              className="flex justify-between border-b border-[#F6EFE9] py-2 text-sm last:border-0"
+            >
+              <span className="min-w-0 truncate">{item.quantity} × {item.name}</span>
+              <span className="shrink-0 font-semibold">
+                {formatPrice(item.subtotal ?? item.price * item.quantity)}
+              </span>
+            </div>
+          ))}
+        </section>
       </div>
     </CustomerLayout>
   );

@@ -1,367 +1,262 @@
-import { useRef, useState } from "react";
+// Waiter home — open table sessions and their orders.
+//
+// The API models the floor as table SESSIONS: scanning a table QR opens one
+// (POST …/waiter/tables/scan), orders are fired against its tableSessionId, and
+// the session closes when the bill is marked paid.
+//
+// Order status transitions live on the chef KDS routes (role: chef), so a waiter
+// token cannot move a ticket — this screen is read-only on status and acts only
+// on the bill. See API-GAPS.md.
+
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCheck, CheckCircle2, QrCode, UtensilsCrossed, X, XCircle } from "lucide-react";
-import jsQR from "jsqr";
+import { QrCode, ReceiptText, UtensilsCrossed } from "lucide-react";
 
 import { useStaffAuth } from "@/context/StaffAuthContext";
-import { useWaiterSessions, useMarkPaid, useScanTable } from "@/hooks/staff/useWaiter";
-import { staffApi } from "@/api/staff.api";
+import {
+  useMarkPaid,
+  useScanTable,
+  useSessionBill,
+  useWaiterSessions,
+  useWaiterTables,
+} from "@/hooks/staff/useWaiter";
+// The public restaurant endpoint needs no auth, so a staff token can read it.
+import { useRestaurant } from "@/hooks/customer/useMenu";
+import QRScannerModal from "@/components/QRScannerModal";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import WaiterLayout from "./WaiterLayout";
+import WaiterLayout, { formatPrice } from "./WaiterLayout";
 import { useWaiter } from "./WaiterApp";
 
-function QRScannerModal({ onClose, onScan }) {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
-  const rafRef = useRef(null);
-  const [status, setStatus] = useState("starting"); // starting | scanning | error
-  const [errorMsg, setErrorMsg] = useState("");
-  const [detected, setDetected] = useState(null);
+const PAYMENT_METHODS = ["cash", "upi", "card", "online"];
 
-  useEffect(() => {
-    let cancelled = false;
+// Statuses a ticket can hold, as the kitchen reports them.
+const STATUS_TONE = {
+  placed:           "bg-brand-cream/50 text-muted-foreground",
+  confirmed:        "bg-[#E7F0FB] text-[#1565C0]",
+  preparing:        "bg-brand-orange/10 text-brand-orange",
+  ready:            "bg-emerald-50 text-emerald-600",
+  out_for_delivery: "bg-[#FFF3E0] text-[#D9480F]",
+  delivered:        "bg-[#F3F4F6] text-[#5F5F5F]",
+  cancelled:        "bg-red-50 text-brand-maroon",
+};
 
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-        });
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play();
-          setStatus("scanning");
-          scan();
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setStatus("error");
-          setErrorMsg(err.name === "NotAllowedError"
-            ? "Camera permission denied. Please allow camera access and try again."
-            : "Could not access camera: " + err.message);
-        }
-      }
+const FILTERS = [
+  { value: "all",       label: "All Tables" },
+  { value: "active",    label: "Food Pending" },
+  { value: "ready",     label: "Ready To Serve" },
+  { value: "served",    label: "All Served" },
+];
+
+function statusLabel(status) {
+  return String(status ?? "").replace(/_/g, " ");
+}
+
+// Extract the tableId the scan endpoint wants from whatever the QR encodes.
+function tableIdFromQr(raw) {
+  const value = String(raw ?? "").trim();
+  try {
+    const url = new URL(value);
+    const id = url.searchParams.get("tableId");
+    if (id) return id;
+  } catch {
+    // Not a URL — fall through.
+  }
+  const match = value.match(/tableId=([A-Za-z0-9]+)/);
+  if (match) return match[1];
+  // A bare ObjectId is also acceptable.
+  return /^[a-f0-9]{24}$/i.test(value) ? value : null;
+}
+
+function sessionState(session) {
+  const orders = (session.orders ?? []).filter((o) => o.status !== "cancelled");
+  if (orders.length === 0) return "active";
+  if (orders.some((o) => o.status === "ready")) return "ready";
+  if (orders.every((o) => o.status === "delivered")) return "served";
+  return "active";
+}
+
+/* ── Bill panel for one session ── */
+function BillPanel({ restaurantId, session, onClose }) {
+  const sessionId = session._id;
+  const { data: bill, isLoading } = useSessionBill(restaurantId, sessionId);
+  const { mutateAsync: markPaid, isPending } = useMarkPaid(restaurantId);
+  const [method, setMethod] = useState("cash");
+  const [error, setError] = useState("");
+
+  async function settle() {
+    setError("");
+    try {
+      await markPaid({ sessionId, paymentMethod: method });
+      onClose();
+    } catch (err) {
+      setError(err.message);
     }
-
-    function scan() {
-      if (cancelled) return;
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (!video || !canvas || video.readyState < 2) {
-        rafRef.current = requestAnimationFrame(scan);
-        return;
-      }
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height);
-      if (code) {
-        setDetected(code.data);
-        setTimeout(() => {
-          onScan(code.data);
-          onClose();
-        }, 800);
-      } else {
-        rafRef.current = requestAnimationFrame(scan);
-      }
-    }
-
-    startCamera();
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(rafRef.current);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="relative w-full max-w-sm overflow-hidden rounded-2xl bg-[#1a1a1a] shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3">
-          <span className="flex items-center gap-2 text-sm font-semibold text-white">
-            <QrCode className="h-4 w-4 text-brand-orange" /> Scan Table QR
-          </span>
-          <button type="button" onClick={onClose} className="rounded-full p-1 text-white/60 hover:text-white">
-            <X className="h-4 w-4" />
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center">
+      <div className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-bold">Bill</h2>
+          <button type="button" onClick={onClose} className="text-sm font-semibold text-muted-foreground">
+            Close
           </button>
         </div>
 
-        {/* Viewfinder */}
-        <div className="relative aspect-square w-full bg-black">
-          <video ref={videoRef} className="h-full w-full object-cover" muted playsInline />
-          <canvas ref={canvasRef} className="hidden" />
+        {error ? (
+          <p className="mb-3 rounded-lg bg-[#FCE9E4] px-3 py-2 text-sm text-brand-maroon">{error}</p>
+        ) : null}
 
-          {/* Scanning overlay corners */}
-          {status === "scanning" && !detected && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="relative h-56 w-56">
-                <span className="absolute left-0 top-0 h-8 w-8 rounded-tl-lg border-l-4 border-t-4 border-brand-orange" />
-                <span className="absolute right-0 top-0 h-8 w-8 rounded-tr-lg border-r-4 border-t-4 border-brand-orange" />
-                <span className="absolute bottom-0 left-0 h-8 w-8 rounded-bl-lg border-b-4 border-l-4 border-brand-orange" />
-                <span className="absolute bottom-0 right-0 h-8 w-8 rounded-br-lg border-b-4 border-r-4 border-brand-orange" />
-                <div className="absolute inset-0 overflow-hidden">
-                  <div className="animate-scan-line absolute left-0 right-0 h-0.5 bg-brand-orange/70 shadow-[0_0_8px_2px_rgba(234,88,12,0.5)]" />
+        {isLoading || !bill ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Assembling bill…</p>
+        ) : (
+          <>
+            <div className="mb-4 space-y-1.5">
+              {(bill.items ?? []).map((item, i) => (
+                <div key={`${item.name}-${i}`} className="flex justify-between text-sm">
+                  <span>{item.quantity} × {item.name}</span>
+                  <span className="font-medium">{formatPrice(item.subtotal)}</span>
                 </div>
+              ))}
+            </div>
+
+            <div className="space-y-1.5 border-t border-brand-cream/60 pt-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span>{formatPrice(bill.subtotal)}</span>
+              </div>
+              {bill.discountAmount ? (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Discount</span>
+                  <span className="text-brand-green">−{formatPrice(bill.discountAmount)}</span>
+                </div>
+              ) : null}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">
+                  Tax{bill.taxRate ? ` (${Math.round(bill.taxRate * 100)}%)` : ""}
+                </span>
+                <span>{formatPrice(bill.taxAmount)}</span>
+              </div>
+              <div className="flex justify-between border-t border-brand-cream/60 pt-2 text-base font-bold">
+                <span>Total</span>
+                <span className="text-brand-red">{formatPrice(bill.grandTotal)}</span>
               </div>
             </div>
-          )}
 
-          {/* Detected flash */}
-          {detected && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-green">
-                <CheckCheck className="h-7 w-7 text-white" />
+            {bill.status === "paid" ? (
+              <p className="mt-4 rounded-xl bg-emerald-50 py-3 text-center text-sm font-bold text-emerald-700">
+                Paid by {bill.paymentMethod}
+              </p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {PAYMENT_METHODS.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setMethod(m)}
+                      className={cn(
+                        "rounded-full px-3.5 py-1.5 text-xs font-bold uppercase transition",
+                        method === m
+                          ? "bg-brand-gradient text-white"
+                          : "border border-brand-cream bg-white text-[#5a403e]",
+                      )}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={settle}
+                  disabled={isPending}
+                  className="w-full rounded-xl bg-brand-gradient py-3 text-sm font-bold text-white disabled:opacity-60"
+                >
+                  {isPending ? "Closing…" : "Mark as paid"}
+                </button>
               </div>
-              <p className="text-sm font-semibold text-white">QR Detected!</p>
-              <p className="text-xs text-white/70">{detected}</p>
-            </div>
-          )}
-
-          {/* Error state */}
-          {status === "error" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 p-6 text-center">
-              <XCircle className="h-10 w-10 text-brand-red" />
-              <p className="text-sm text-white/80">{errorMsg}</p>
-              <button
-                type="button"
-                onClick={onClose}
-                className="mt-1 rounded-lg bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/20"
-              >
-                Close
-              </button>
-            </div>
-          )}
-
-          {/* Starting spinner */}
-          {status === "starting" && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-            </div>
-          )}
-        </div>
-
-        <p className="px-4 py-3 text-center text-xs text-white/50">
-          Point your camera at the table QR code
-        </p>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-const FILTERS = ["All Orders", "Preparing", "Ready To Serve", "Served", "Bill Requested", "Completed"];
-
-/* ── Derive batches from flat items array ── */
-function toBatches(items, size = 3) {
-  const out = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
-function batchStatus(batchIndex, batchCount, orderStatus) {
-  const s = (orderStatus ?? "").toLowerCase();
-  if (s === "cancelled") return "CANCELLED";
-  if (s === "ready" || s === "served" || s === "completed") return "PREPARED";
-  if (s === "preparing") return batchIndex < batchCount - 1 ? "PREPARED" : "PREPARING";
-  return "PREPARING";
-}
-
-function BatchIcon({ status }) {
-  if (status === "PREPARED")
-    return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
-  if (status === "CANCELLED")
-    return <XCircle className="h-4 w-4 text-brand-maroon" />;
-  return (
-    <span className="flex h-4 w-4 items-center justify-center rounded-full border-2 border-brand-orange bg-white">
-      <span className="h-1.5 w-1.5 rounded-full bg-brand-orange" />
-    </span>
-  );
-}
-
-function BatchStatusBadge({ status }) {
-  if (status === "PREPARED")
-    return <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-600">PREPARED</span>;
-  if (status === "CANCELLED")
-    return <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-[10px] font-bold text-brand-maroon">CANCELLED</span>;
-  return <span className="rounded-full bg-brand-orange/10 px-2.5 py-0.5 text-[10px] font-bold text-brand-orange">PREPARING</span>;
-}
-
-function orderStatusLabel(orderStatus, paymentStatus) {
-  if (paymentStatus === "paid") return { label: "Completed", color: "text-muted-foreground" };
-  const s = (orderStatus ?? "").toLowerCase();
-  if (s === "ready") return { label: "Ready To Serve", color: "text-emerald-600" };
-  if (s === "served") return { label: "Served", color: "text-emerald-600" };
-  if (s === "cancelled") return { label: "Cancelled", color: "text-brand-maroon" };
-  return { label: "Preparing", color: "text-brand-orange" };
-}
-
-function statusDot(color) {
-  const map = {
-    "text-emerald-600": "bg-emerald-500",
-    "text-brand-orange": "bg-brand-orange",
-    "text-brand-maroon": "bg-brand-maroon",
-    "text-muted-foreground": "bg-gray-400",
-  };
-  return map[color] ?? "bg-gray-400";
-}
-
-function matchesFilter(order, filter) {
-  if (filter === "All Orders") return true;
-  const s = (order.orderStatus ?? "").toLowerCase();
-  const p = (order.paymentStatus ?? "").toLowerCase();
-  if (filter === "Preparing") return s === "new" || s === "preparing";
-  if (filter === "Ready To Serve") return s === "ready";
-  if (filter === "Served") return s === "served";
-  if (filter === "Bill Requested") return p === "requested";
-  if (filter === "Completed") return p === "paid" || s === "completed";
-  return true;
-}
-
-/* ── Single order card ── */
-function OrderCard({ order, onAction }) {
-  const navigate = useNavigate();
-  const { setActiveTable, clearCart, addToCart, setQuantity } = useWaiter();
-  const batches = toBatches(order.items);
-
-  function handleModify() {
-    clearCart();
-    setActiveTable(`T-${order.tableNumber}`);
-    for (const item of order.items) {
-      addToCart({ id: item.id, name: item.title, price: item.price ?? 0, foodType: "veg" });
-      if (item.quantity > 1) setQuantity(item.id, item.quantity);
-    }
-    navigate("/waiter/menu");
-  }
-
-  function handleAddItems() {
-    setActiveTable(`T-${order.tableNumber}`);
-    navigate("/waiter/menu");
-  }
-  const { label, color } = orderStatusLabel(order.orderStatus, order.paymentStatus);
-  const total = order.items.reduce((sum, i) => sum + (i.price ?? 0) * i.quantity, 0);
-  const billRequested = (order.paymentStatus ?? "") === "requested";
-  const paid = (order.paymentStatus ?? "") === "paid";
+/* ── One table session ── */
+function SessionCard({ session, tableLabel, onAddItems, onViewBill }) {
+  const orders = session.orders ?? [];
 
   return (
     <div className="overflow-hidden rounded-2xl border border-brand-cream/60 bg-white shadow-sm">
-      {/* Card header */}
-      <div className="flex items-center justify-between border-b border-brand-cream/40 px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-cream/40 px-5 py-4">
         <div className="flex items-center gap-2.5">
           <span className="rounded-lg bg-[#FFF0E6] px-3 py-1.5 text-sm font-bold text-brand-orange">
-            T-{order.tableNumber}
+            {tableLabel}
           </span>
           <span className="rounded-full bg-brand-orange/10 px-2.5 py-0.5 text-[10px] font-bold uppercase text-brand-orange">
-            Dine-In
-          </span>
-          <span className={cn("flex items-center gap-1.5 text-sm font-semibold", color)}>
-            <span className={cn("h-2 w-2 rounded-full", statusDot(color))} />
-            {label}
+            {session.batchCount ?? orders.length} batches
           </span>
         </div>
-        <div className="text-right">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-            {batches.length} Batches Total
-          </p>
-          <p className="text-base font-bold text-[#24190f]">
-            ₹{total.toLocaleString("en-IN")}
-          </p>
-        </div>
+        <span className="text-sm font-bold text-brand-red">
+          {formatPrice(session.runningTotal)}
+        </span>
       </div>
 
-      {/* Batches */}
-      <div className="divide-y divide-brand-cream/40 px-5">
-        {batches.map((batch, bIdx) => {
-          const bStatus = batchStatus(bIdx, batches.length, order.orderStatus);
-          const cancelled = bStatus === "CANCELLED";
-          return (
-            <div key={bIdx} className="py-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <BatchIcon status={bStatus} />
-                  <span className={cn("text-sm font-bold uppercase tracking-wide", cancelled ? "text-muted-foreground" : "")}>
-                    Batch {String(bIdx + 1).padStart(2, "0")}
-                  </span>
-                </div>
-                <BatchStatusBadge status={bStatus} />
+      <div className="space-y-3 px-5 py-4">
+        {orders.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Table is open with no orders yet.
+          </p>
+        ) : (
+          orders.map((o) => (
+            <div key={o._id} className="rounded-xl border border-brand-cream/50 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-bold text-muted-foreground">
+                  Batch {o.batchNumber ?? "—"} · #{String(o._id).slice(-5).toUpperCase()}
+                </span>
+                <span
+                  className={cn(
+                    "rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase",
+                    STATUS_TONE[o.status] ?? "bg-brand-cream/50 text-muted-foreground",
+                  )}
+                >
+                  {statusLabel(o.status)}
+                </span>
               </div>
-              <div className="space-y-2">
-                {batch.map((item, iIdx) => (
-                  <div
-                    key={iIdx}
-                    className={cn(
-                      "flex items-center justify-between text-sm",
-                      cancelled && "opacity-50",
-                    )}
-                  >
-                    <span className="text-[#24190f]">
-                      {item.quantity}x {item.title}
-                    </span>
-                    {item.price != null && (
-                      <span className="font-medium text-[#24190f]">
-                        ₹{(item.price * item.quantity).toLocaleString("en-IN")}
-                      </span>
-                    )}
-                  </div>
+              <div className="space-y-1">
+                {(o.items ?? []).map((item, i) => (
+                  <p key={item.menuItemId ?? i} className="text-sm text-[#5a403e]">
+                    {item.quantity} × {item.name}
+                  </p>
                 ))}
               </div>
+              {o.specialInstructions ? (
+                <p className="mt-2 text-xs italic text-muted-foreground">
+                  “{o.specialInstructions}”
+                </p>
+              ) : null}
             </div>
-          );
-        })}
+          ))
+        )}
       </div>
 
-      {/* Actions — 2 cols on xs, 4 cols on sm+ */}
-      <div className="grid grid-cols-2 gap-px border-t border-brand-cream/50 bg-brand-cream/30 sm:grid-cols-4">
+      <div className="flex gap-2 border-t border-brand-cream/40 px-5 py-3">
         <button
           type="button"
-          onClick={handleAddItems}
-          className="bg-white px-3 py-3.5 text-sm font-semibold text-[#24190f] transition hover:bg-brand-cream/20 first:rounded-bl-2xl sm:first:rounded-bl-2xl"
+          onClick={onAddItems}
+          className="flex-1 rounded-xl border border-brand-cream bg-white py-2.5 text-sm font-bold text-[#24190f] hover:bg-brand-cream/20"
         >
-          Add Items
+          Add items
         </button>
         <button
           type="button"
-          onClick={handleModify}
-          className="bg-white px-3 py-3.5 text-sm font-semibold text-[#24190f] transition hover:bg-brand-cream/20"
+          onClick={onViewBill}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-gradient py-2.5 text-sm font-bold text-white hover:brightness-105"
         >
-          Modify Order
+          <ReceiptText className="h-4 w-4" /> Bill
         </button>
-        <button
-          type="button"
-          onClick={() => onAction(order.id, "served")}
-          className="flex items-center justify-center gap-1.5 bg-white px-3 py-3.5 text-sm font-semibold text-[#24190f] transition hover:bg-brand-cream/20"
-        >
-          <CheckCheck className="h-4 w-4" /> Served
-        </button>
-        {paid ? (
-          <button
-            type="button"
-            disabled
-            className="rounded-br-2xl bg-white px-3 py-3.5 text-sm font-semibold text-muted-foreground sm:rounded-bl-none"
-          >
-            Paid
-          </button>
-        ) : billRequested ? (
-          <button
-            type="button"
-            onClick={() => navigate("/waiter/orders")}
-            className="rounded-br-2xl border border-brand-maroon bg-white px-3 py-3.5 text-sm font-bold text-brand-maroon transition hover:bg-brand-maroon/5 sm:rounded-bl-none"
-          >
-            View Bill
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onAction(order.id, "requested", true)}
-            className="rounded-br-2xl bg-white px-3 py-3.5 text-sm font-semibold text-[#24190f] transition hover:bg-brand-cream/20 sm:rounded-bl-none"
-          >
-            Request Bill
-          </button>
-        )}
       </div>
     </div>
   );
@@ -372,53 +267,59 @@ export default function WaiterDashboard() {
   const navigate = useNavigate();
   const { staff } = useStaffAuth();
   const restaurantId = staff?.restaurantId;
+  const { activeTable, setActiveTable } = useWaiter();
 
-  const [activeTable, setActiveTable] = useState(null);
-  const [filter, setFilter] = useState("All Orders");
+  const [filter, setFilter] = useState("all");
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [billSession, setBillSession] = useState(null);
   const [actionError, setActionError] = useState("");
 
-  // TanStack Query — sessions auto-poll every 15s
   const { data: sessions = [], isLoading, error: sessionsErr } = useWaiterSessions(restaurantId);
-  const { mutate: markPaid } = useMarkPaid(restaurantId);
+  const { data: tables = [] } = useWaiterTables(restaurantId);
+  const { data: restaurant } = useRestaurant(restaurantId);
+  const { mutateAsync: scanTable, isPending: scanning } = useScanTable(restaurantId);
 
   const error = actionError || sessionsErr?.message || "";
 
-  // Flatten sessions to order-like objects the existing UI expects
-  const orders = sessions.flatMap((session) =>
-    (session.orders ?? [session]).map((o) => ({
-      ...o,
-      tableNumber: session.tableNumber ?? o.tableNumber,
-      sessionId:   session._id ?? session.id,
-    })),
+  // Sessions reference a tableId; resolve the human identifier from the roster.
+  const tableLabelById = useMemo(
+    () => Object.fromEntries(tables.map((t) => [t._id, t.identifier])),
+    [tables],
   );
 
-  function handleQRScan(value) {
-    const match = String(value).match(/\d+/);
-    if (match) setActiveTable(`T-${match[0]}`);
-  }
+  const visible = useMemo(() => {
+    if (filter === "all") return sessions;
+    return sessions.filter((s) => sessionState(s) === filter);
+  }, [sessions, filter]);
 
-  async function handleAction(orderId, status, isPayment = false) {
+  async function handleQRScan(raw) {
     setActionError("");
+    const tableId = tableIdFromQr(raw);
+    if (!tableId) {
+      setActionError("That QR code doesn't carry a table id.");
+      return;
+    }
     try {
-      if (isPayment) {
-        // Find the session for this order to get sessionId
-        const session = sessions.find(
-          (s) => (s.orders ?? [s]).some((o) => (o._id ?? o.id) === orderId),
-        );
-        if (session) {
-          markPaid({ sessionId: session._id ?? session.id, paymentMethod: "cash" });
-        }
-      } else {
-        // Direct status update via staff.api (chef-side endpoint available to waiter view too)
-        await staffApi.updateOrderStatus(restaurantId, orderId, status);
-      }
+      const { data } = await scanTable(tableId);
+      const { table, session } = data.data;
+      setActiveTable({
+        sessionId: session._id,
+        tableId: table._id,
+        identifier: table.identifier,
+      });
     } catch (err) {
       setActionError(err.message);
     }
   }
 
-  const filtered = orders.filter((o) => matchesFilter(o, filter));
+  function openTableForOrdering(session) {
+    setActiveTable({
+      sessionId: session._id,
+      tableId: session.tableId,
+      identifier: tableLabelById[session.tableId] ?? "Table",
+    });
+    navigate("/waiter/menu");
+  }
 
   return (
     <WaiterLayout>
@@ -426,7 +327,7 @@ export default function WaiterDashboard() {
       <header className="sticky top-0 z-30 border-b border-brand-cream/60 bg-[#FAFAF8] px-4 py-3 sm:px-6">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-lg font-bold text-brand-red">Saffron Kitchen</p>
+            <p className="text-lg font-bold text-brand-red">{restaurant?.name ?? "—"}</p>
             <p className="text-xs text-muted-foreground">Waiter Dashboard</p>
           </div>
           <div className="flex items-center gap-2">
@@ -437,82 +338,92 @@ export default function WaiterDashboard() {
             </Avatar>
             <div className="hidden flex-col leading-tight sm:flex">
               <span className="text-sm font-semibold">{staff?.name ?? "Waiter"}</span>
-              <span className="text-[10px] text-muted-foreground">Waiter</span>
+              <span className="text-[10px] capitalize text-muted-foreground">
+                {staff?.role ?? "waiter"}
+              </span>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Table context bar */}
+      {/* Active table bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-cream/50 bg-[#FAFAF8] px-4 py-2.5 sm:px-6">
         <span className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
           <UtensilsCrossed className="h-4 w-4 shrink-0" />
-          Table {activeTable}
+          {activeTable
+            ? `Table ${activeTable.identifier}`
+            : "No table selected — scan a QR to open one"}
         </span>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setScannerOpen(true)}
-            className="flex items-center gap-1.5 rounded-xl bg-brand-gradient px-3 py-2 text-sm font-bold text-white hover:brightness-105 sm:px-3.5"
-          >
-            <QrCode className="h-4 w-4" /> Scan QR
-          </button>
-          <button
-            type="button"
-            className="rounded-xl border border-brand-cream/80 bg-white px-3 py-2 text-sm font-semibold text-[#24190f] hover:bg-brand-cream/20 sm:px-3.5"
-          >
-            Select Table
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setScannerOpen(true)}
+          disabled={scanning}
+          className="flex shrink-0 items-center gap-1.5 rounded-xl bg-brand-gradient px-3 py-2 text-sm font-bold text-white hover:brightness-105 disabled:opacity-60 sm:px-3.5"
+        >
+          <QrCode className="h-4 w-4" /> {scanning ? "Opening…" : "Scan QR"}
+        </button>
       </div>
 
       <div className="mx-auto max-w-[860px] px-4 py-5 sm:px-5">
-        {/* Filter tabs */}
-        <div className="mb-5 flex flex-wrap gap-2">
+        {error ? (
+          <p className="mb-4 rounded-xl bg-[#FCE9E4] px-4 py-2.5 text-sm text-brand-maroon">
+            {error}
+          </p>
+        ) : null}
+
+        {/* Filters */}
+        <div className="mb-4 flex gap-1.5 overflow-x-auto pb-1">
           {FILTERS.map((f) => (
             <button
-              key={f}
+              key={f.value}
               type="button"
-              onClick={() => setFilter(f)}
+              onClick={() => setFilter(f.value)}
               className={cn(
-                "rounded-full border px-4 py-1.5 text-sm font-semibold transition",
-                filter === f
-                  ? "border-brand-maroon bg-white text-brand-maroon"
-                  : "border-brand-cream/70 bg-white text-[#5a403e] hover:border-brand-maroon/40 hover:text-brand-maroon",
+                "shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition",
+                filter === f.value
+                  ? "bg-brand-gradient text-white"
+                  : "border border-brand-cream bg-white text-[#5a403e]",
               )}
             >
-              {f}
+              {f.label}
             </button>
           ))}
         </div>
 
-        {error && (
-          <p className="mb-4 rounded-xl bg-red-50 px-4 py-2.5 text-sm text-brand-maroon">{error}</p>
-        )}
-
-        {/* Order cards */}
-        {isLoading ? (
-          <div className="rounded-2xl border border-brand-cream/60 bg-white py-14 text-center text-sm text-muted-foreground animate-pulse">
-            Loading orders…
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="rounded-2xl border border-brand-cream/60 bg-white py-14 text-center text-sm text-muted-foreground">
-            No orders for this filter.
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {filtered.map((order) => (
-              <OrderCard key={order._id ?? order.id} order={order} onAction={handleAction} />
-            ))}
-          </div>
-        )}
+        {/* Sessions */}
+        <div className="space-y-4">
+          {visible.map((session) => (
+            <SessionCard
+              key={session._id}
+              session={session}
+              tableLabel={tableLabelById[session.tableId] ?? "Table"}
+              onAddItems={() => openTableForOrdering(session)}
+              onViewBill={() => setBillSession(session)}
+            />
+          ))}
+          {visible.length === 0 ? (
+            <div className="rounded-2xl border border-brand-cream/60 bg-white py-12 text-center text-sm text-muted-foreground">
+              {isLoading
+                ? "Loading tables…"
+                : sessions.length === 0
+                  ? "No open tables. Scan a table QR to seat a guest."
+                  : "No tables match this filter."}
+            </div>
+          ) : null}
+        </div>
       </div>
-      {scannerOpen && (
-        <QRScannerModal
-          onClose={() => setScannerOpen(false)}
-          onScan={handleQRScan}
+
+      {scannerOpen ? (
+        <QRScannerModal onClose={() => setScannerOpen(false)} onScan={handleQRScan} />
+      ) : null}
+
+      {billSession ? (
+        <BillPanel
+          restaurantId={restaurantId}
+          session={billSession}
+          onClose={() => setBillSession(null)}
         />
-      )}
+      ) : null}
     </WaiterLayout>
   );
 }

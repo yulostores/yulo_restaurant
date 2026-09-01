@@ -9,7 +9,9 @@ import {
   PlusCircle,
   BadgePercent,
   Monitor,
+  Receipt,
   Store,
+  UserRound,
   Users,
   X,
 } from "lucide-react";
@@ -34,6 +36,7 @@ const NAV_SECTIONS = [
     title: "Orders Management",
     items: [
       { to: "/orders", label: "Manage Orders", icon: ReceiptText },
+      { to: "/bill", label: "Bills", icon: Receipt },
       { to: "/cancellations", label: "Cancellations", icon: XCircle },
     ],
   },
@@ -61,6 +64,7 @@ const NAV_SECTIONS = [
     items: [
       { to: "/staff", label: "Staff Management", icon: Users },
       { to: "/store-settings", label: "Store Settings", icon: Store },
+      { to: "/profile", label: "Profile", icon: UserRound },
     ],
   },
 ];

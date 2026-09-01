@@ -2,8 +2,11 @@ import { createContext, useCallback, useContext, useState } from "react";
 import { authApi } from "@/api/auth.api";
 import { setStaffToken, getStaffToken } from "@/api/client";
 
-// localStorage so the session survives tab closes and mobile browser restarts.
-// Waiters/chefs work long shifts and shouldn't be forced to re-login on refresh.
+// Staff sign in with restaurantId + PIN (POST /api/staff/auth/login). The server
+// identifies the member from the PIN alone — there is no staff code in the body.
+// The staff token is long-lived (8h) and lives in localStorage so the session
+// survives tab closes and mobile browser restarts during a shift.
+
 const PROFILE_KEY = "yulo_staff_profile";
 
 function readProfile() {
@@ -20,16 +23,21 @@ const StaffAuthContext = createContext(null);
 export function StaffAuthProvider({ children }) {
   const [staff, setStaff] = useState(() => {
     const profile = readProfile();
-    // Restore token into the client module so Axios interceptor picks it up.
-    if (profile) getStaffToken(); // reads from localStorage internally
+    // Rehydrate the token into the client module for the Axios interceptor.
+    if (profile) getStaffToken();
     return profile;
   });
 
-  const login = useCallback(async ({ restaurantId, staffCode, pin }) => {
-    const { data } = await authApi.staffLogin({ restaurantId, staffCode, pin });
-    const { staffToken, role, name, staffCode: code } = data.data;
+  const login = useCallback(async ({ restaurantId, pin }) => {
+    const { data } = await authApi.staffLogin({ restaurantId, pin });
+    const { staff: member, staffToken } = data.data;
     setStaffToken(staffToken);
-    const profile = { role, name, staffCode: code, restaurantId };
+    const profile = {
+      id: member._id,
+      name: member.name,
+      role: member.role,
+      restaurantId: member.restaurantId ?? restaurantId,
+    };
     localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
     setStaff(profile);
     return profile;

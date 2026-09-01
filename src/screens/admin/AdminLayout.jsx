@@ -1,37 +1,34 @@
-// Platform Admin shell — a dark platform sidebar (distinct branding from the
-// owner portal) + top bar. Used across all /admin/* screens (PRD §14).
+// Platform Admin shell — dark platform sidebar + top bar, used across /admin/*.
+// Navigation mirrors the documented admin surface (API.md § Admin): stores,
+// customers, delivery partners, support tickets, reports.
 
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+  BarChart3,
   Bell,
-  ClipboardList,
+  Bike,
   LayoutDashboard,
+  LifeBuoy,
   LogOut,
   Menu,
-  QrCode,
-  ScrollText,
-  Settings,
   ShieldCheck,
   Store,
-  Tag,
   Users,
   X,
 } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useAdminAuth } from "@/context/AdminAuthContext";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
-  { to: "/admin/restaurants", label: "Restaurants", icon: Store },
-  { to: "/admin/users", label: "Users & Customers", icon: Users },
-  { to: "/admin/roles", label: "Staff & Roles", icon: ShieldCheck },
-  { to: "/admin/qr", label: "QR Management", icon: QrCode },
-  { to: "/admin/orders", label: "Order Monitoring", icon: ClipboardList },
-  { to: "/admin/offers", label: "Offer Monitoring", icon: Tag },
-  { to: "/admin/activity", label: "Activity Logs", icon: ScrollText },
-  { to: "/admin/settings", label: "System Settings", icon: Settings },
+  { to: "/admin/stores", label: "Stores", icon: Store },
+  { to: "/admin/customers", label: "Customers", icon: Users },
+  { to: "/admin/delivery-partners", label: "Delivery Partners", icon: Bike },
+  { to: "/admin/tickets", label: "Support Tickets", icon: LifeBuoy },
+  { to: "/admin/reports", label: "Reports", icon: BarChart3 },
 ];
 
 export function formatPrice(value) {
@@ -39,16 +36,22 @@ export function formatPrice(value) {
     style: "currency",
     currency: "INR",
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(Number(value) || 0);
 }
 
 export function formatNumber(value) {
-  return new Intl.NumberFormat("en-IN").format(value);
+  return new Intl.NumberFormat("en-IN").format(Number(value) || 0);
+}
+
+export function initials(name) {
+  if (!name) return "AD";
+  return name.split(" ").filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
 export default function AdminLayout({ children, title, subtitle, action }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const { admin, logout } = useAdminAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const isActive = (item) => (item.exact ? pathname === item.to : pathname.startsWith(item.to));
@@ -58,9 +61,13 @@ export default function AdminLayout({ children, title, subtitle, action }) {
     setSidebarOpen(false);
   }
 
+  async function handleLogout() {
+    await logout();
+    navigate("/admin/login", { replace: true });
+  }
+
   return (
     <div className="flex min-h-screen bg-brand-page font-sans text-[#24190f]">
-      {/* Mobile backdrop */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/50 lg:hidden"
@@ -121,7 +128,7 @@ export default function AdminLayout({ children, title, subtitle, action }) {
         <div className="border-t border-brand-cream/10 p-3">
           <button
             type="button"
-            onClick={() => navigate("/")}
+            onClick={handleLogout}
             className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-brand-cream hover:bg-brand-cream/10"
           >
             <LogOut className="h-[18px] w-[18px]" /> Logout
@@ -149,14 +156,17 @@ export default function AdminLayout({ children, title, subtitle, action }) {
               aria-label="Notifications"
             >
               <Bell className="h-[18px] w-[18px]" />
-              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-brand-orange" />
             </button>
             <Avatar>
-              <AvatarFallback className="bg-brand-gradient text-xs font-semibold text-white">AD</AvatarFallback>
+              <AvatarFallback className="bg-brand-gradient text-xs font-semibold text-white">
+                {initials(admin?.name)}
+              </AvatarFallback>
             </Avatar>
             <div className="hidden flex-col leading-tight sm:flex">
-              <span className="text-sm font-semibold">Platform Admin</span>
-              <span className="text-xs text-muted-foreground">Super Admin</span>
+              <span className="text-sm font-semibold">{admin?.name ?? "Admin"}</span>
+              <span className="text-xs capitalize text-muted-foreground">
+                {admin?.role ?? "admin"}
+              </span>
             </div>
           </div>
         </header>

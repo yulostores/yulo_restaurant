@@ -1,64 +1,70 @@
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+// Owner account (/profile) — GET/PATCH /api/users/me, which serves both
+// customers and restaurant owners.
+//
+// The documented PATCH body carries `name` and `phone` only: there is no
+// password-change endpoint and no notification-preferences resource, so those
+// panels state the gap rather than pretending to save. See API-GAPS.md.
+
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
-import { ownerApi } from "@/api/owner.api";
+import { userApi } from "@/api/user.api";
 import DashboardLayout from "@/components/DashboardLayout";
+import FeatureUnavailable from "@/components/FeatureUnavailable";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-
-const NOTIFICATION_OPTIONS = [
-  { key: "newOrders",     label: "New orders",     note: "Alert me when a new order is placed." },
-  { key: "cancellations", label: "Cancellations",  note: "Alert me on cancellation requests." },
-  { key: "lowStock",      label: "Low stock",       note: "Alert me when inventory runs low." },
-  { key: "dailyReport",   label: "Daily report",    note: "Email me a daily summary." },
-];
 
 function initials(name = "") {
-  return name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  if (!name) return "—";
+  return name.split(" ").filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
 export default function Profile() {
   const { user } = useOwnerAuth();
+  const qc = useQueryClient();
 
-  const [form, setForm] = useState({
-    name:          user?.name  ?? "",
-    email:         user?.email ?? "",
-    phone:         user?.phone ?? "",
-    notifications: user?.notifications ?? {
-      newOrders: true, cancellations: true, lowStock: false, dailyReport: true,
-    },
+  const { data: profile, isLoading } = useQuery({
+    queryKey: ["user-profile"],
+    queryFn: () => userApi.getMe().then((r) => r.data.data.user),
+    staleTime: 5 * 60_000,
   });
-  const [password, setPassword] = useState({ next: "", confirm: "" });
+
+  const [form, setForm] = useState({ name: "", phone: "" });
   const [statusMsg, setStatusMsg] = useState("");
 
+  // Seed the editable fields from the server record.
+  useEffect(() => {
+    if (!profile) return;
+    setForm({ name: profile.name ?? "", phone: profile.phone ?? "" });
+  }, [profile]);
+
   const updateMutation = useMutation({
-    mutationFn: (body) => ownerApi.updateProfile(body),
-    onSuccess: () => {
+    mutationFn: (body) => userApi.updateMe(body),
+    onSuccess: ({ data }) => {
+      qc.setQueryData(["user-profile"], data.data.user);
       setStatusMsg("Profile saved");
-      setPassword({ next: "", confirm: "" });
     },
-    onError: (err) => setStatusMsg(err.response?.data?.message ?? "Save failed"),
+    onError: (err) => setStatusMsg(err.message ?? "Save failed"),
   });
 
   function handleSave(e) {
     e.preventDefault();
     setStatusMsg("");
-    if (password.next && password.next !== password.confirm) {
-      setStatusMsg("Passwords do not match");
-      return;
-    }
-    updateMutation.mutate({
-      name:          form.name,
-      email:         form.email,
-      phone:         form.phone,
-      notifications: form.notifications,
-      ...(password.next ? { password: password.next } : {}),
-    });
+    updateMutation.mutate({ name: form.name, phone: form.phone });
+  }
+
+  const account = profile ?? user;
+
+  if (isLoading && !profile) {
+    return (
+      <DashboardLayout>
+        <p className="text-muted-foreground">Loading profile…</p>
+      </DashboardLayout>
+    );
   }
 
   return (
@@ -68,18 +74,21 @@ export default function Profile() {
           <div>
             <h1 className="text-2xl font-bold">Profile</h1>
             <p className="text-sm text-muted-foreground">
-              Manage your account details and notification preferences.
+              Manage your account details.
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {statusMsg && (
-              <span className={statusMsg.includes("not match") || statusMsg.includes("failed")
-                ? "text-sm text-brand-maroon"
-                : "text-sm text-brand-green"}
+            {statusMsg ? (
+              <span
+                className={
+                  statusMsg === "Profile saved"
+                    ? "text-sm text-brand-green"
+                    : "text-sm text-brand-maroon"
+                }
               >
                 {statusMsg}
               </span>
-            )}
+            ) : null}
             <Button
               type="submit"
               disabled={updateMutation.isPending}
@@ -100,10 +109,10 @@ export default function Profile() {
             </Avatar>
             <div>
               <h2 className="text-lg font-bold">{form.name || "—"}</h2>
-              <p className="text-sm text-muted-foreground">
-                {user?.role ?? "owner"}
-                {user?.createdAt
-                  ? ` · joined ${new Date(user.createdAt).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}`
+              <p className="text-sm capitalize text-muted-foreground">
+                {(account?.role ?? "").replace("_", " ") || "—"}
+                {account?.createdAt
+                  ? ` · joined ${new Date(account.createdAt).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}`
                   : ""}
               </p>
             </div>
@@ -118,79 +127,41 @@ export default function Profile() {
           <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Full Name</Label>
-              <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <Input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+              <Input
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Phone</Label>
-              <Input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+              <Input
+                value={form.phone}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Email</Label>
+              {/* The profile endpoint doesn't accept an email change. */}
+              <Input value={account?.email ?? ""} disabled />
             </div>
             <div className="space-y-1.5">
               <Label>Role</Label>
-              <Input value={user?.role ?? "owner"} disabled />
+              <Input value={(account?.role ?? "").replace("_", " ")} disabled className="capitalize" />
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Password */}
-        <Card>
-          <CardHeader className="pb-4">
-            <h2 className="text-base font-bold">Change Password</h2>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>New Password</Label>
-              <Input
-                type="password"
-                value={password.next}
-                onChange={(e) => setPassword((p) => ({ ...p, next: e.target.value }))}
-                placeholder="Leave blank to keep current"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Confirm Password</Label>
-              <Input
-                type="password"
-                value={password.confirm}
-                onChange={(e) => setPassword((p) => ({ ...p, confirm: e.target.value }))}
-                placeholder="Re-enter new password"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Notifications */}
-        <Card>
-          <CardHeader className="pb-4">
-            <h2 className="text-base font-bold">Notification Preferences</h2>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {NOTIFICATION_OPTIONS.map((opt) => (
-              <label
-                key={opt.key}
-                className="flex items-center justify-between rounded-xl border border-brand-cream/70 px-4 py-3"
-              >
-                <div>
-                  <p className="text-sm font-semibold">{opt.label}</p>
-                  <p className="text-xs text-muted-foreground">{opt.note}</p>
-                </div>
-                <Switch
-                  checked={!!form.notifications[opt.key]}
-                  onCheckedChange={(v) =>
-                    setForm((f) => ({
-                      ...f,
-                      notifications: { ...f.notifications, [opt.key]: v },
-                    }))
-                  }
-                />
-              </label>
-            ))}
           </CardContent>
         </Card>
       </form>
+
+      {/* Password + notifications have no endpoints in the current API. */}
+      <FeatureUnavailable
+        title="Password and notification settings aren't available yet"
+        note="Changing your password or choosing which alerts you receive both need endpoints the API doesn't expose."
+        needs={[
+          "PATCH /api/users/me/password       { currentPassword, newPassword }",
+          "GET   /api/users/me/notifications",
+          "PATCH /api/users/me/notifications  { newOrders, cancellations, … }",
+        ]}
+      />
     </DashboardLayout>
   );
 }

@@ -33,14 +33,14 @@ client.interceptors.request.use((config) => {
   return config;
 });
 
-// ── Response interceptor — auto-refresh for owner/customer tokens ───────────
+// ── Response interceptor — auto-refresh for owner/customer/admin tokens ─────
 let _refreshing = false;
 let _queue = [];
 
 client.interceptors.response.use(
   (res) => res,
   async (err) => {
-    const original = err.config;
+    const original = err.config ?? {};
     const code = err.response?.data?.code;
 
     // Staff token expired or revoked — clear storage and redirect to login.
@@ -52,10 +52,11 @@ client.interceptors.response.use(
       setStaffToken(null);
       localStorage.removeItem("yulo_staff_profile");
       window.location.replace("/staff/login");
-      return Promise.reject(err);
+      return Promise.reject(normalise(err, code));
     }
 
-    // Only auto-refresh owner/customer access tokens, not staff tokens.
+    // Only auto-refresh owner/customer/admin access tokens, not staff tokens.
+    // POST /api/auth/refresh is shared across all three roles (API.md).
     if (code === "TOKEN_EXPIRED" && !original._retried && !original._staff) {
       original._retried = true;
 
@@ -90,14 +91,18 @@ client.interceptors.response.use(
       }
     }
 
-    // Unwrap Axios error so callers get a plain Error with the API message.
-    const message = err.response?.data?.message ?? err.message ?? "Request failed";
-    const apiError = new Error(message);
-    apiError.code = code;
-    apiError.status = err.response?.status;
-    apiError.details = err.response?.data?.details;
-    return Promise.reject(apiError);
+    return Promise.reject(normalise(err, code));
   },
 );
+
+// Unwrap Axios error so callers get a plain Error with the API message.
+function normalise(err, code) {
+  const message = err.response?.data?.message ?? err.message ?? "Request failed";
+  const apiError = new Error(message);
+  apiError.code = code ?? err.response?.data?.code;
+  apiError.status = err.response?.status;
+  apiError.details = err.response?.data?.details;
+  return apiError;
+}
 
 export default client;

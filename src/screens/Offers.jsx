@@ -39,40 +39,41 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 const DISCOUNT_TYPES = [
-  { value: "percent", label: "Percentage" },
-  { value: "flat", label: "Flat Amount" },
-  { value: "free_item", label: "Free Item" },
-  { value: "tableware", label: "Tablewise offer" },
+  { value: "percentage",  label: "Percentage" },
+  { value: "flat_amount", label: "Flat Amount" },
+  { value: "free_item",   label: "Free Item" },
+  { value: "tablewise",   label: "Tablewise offer" },
 ];
 
 const APPLICABLE = [
-  { value: "dine-in", label: "Dine-in" },
+  { value: "dine_in",  label: "Dine-in" },
   { value: "delivery", label: "Delivery" },
-  { value: "both", label: "Both" },
+  { value: "both",     label: "Both" },
 ];
 
-const STATUS_VARIANT = { active: "ok", scheduled: "info", expired: "muted" };
+// The API models exactly two states: draft and active.
+const STATUS_VARIANT = { active: "ok", draft: "muted" };
 
 const EMPTY = {
   name: "",
   type: "coupon",
   code: "",
   description: "",
-  discountType: "percent",
+  discountType: "percentage",
   discountValue: "",
   discountName: "",
   item: "",
   minOrder: "",
   itemApplicability: "entire_menu",
   tableNumbers: "",
-  applicableFor: "dine-in",
+  applicableFor: "dine_in",
   validFrom: "",
   validTo: "",
 };
 
 function discountLabel(offer) {
-  if (offer.discountType === "percent") return `${offer.discountValue}% Off`;
-  if (offer.discountType === "flat") return `₹${offer.discountValue} Off`;
+  if (offer.discountType === "percentage")  return `${offer.discountValue}% Off`;
+  if (offer.discountType === "flat_amount") return `₹${offer.discountValue} Off`;
   if (offer.discountType === "free_item") return "Free Item";
   return "Tableware";
 }
@@ -126,7 +127,6 @@ export default function Offers() {
   const publishMutation = usePublishDiscount(restaurantId);
 
   const [form, setForm]               = useState(EMPTY);
-  const [drafts, setDrafts]           = useState([]);
   const [search, setSearch]           = useState("");
   const [error, setError]             = useState("");
   const [editingOffer, setEditingOffer] = useState(null);
@@ -134,16 +134,14 @@ export default function Offers() {
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
-  // Map frontend form shape → backend Zod schema shape
+  // The form already speaks the API's vocabulary, so this is a straight map
+  // onto the discriminated-union body documented for POST /discounts.
   function toPayload(f) {
-    const typeMap = { percent: "percentage", flat: "flat_amount", free_item: "free_item", tableware: "tablewise" };
-    const applicableMap = { "dine-in": "dine_in", delivery: "delivery", both: "both" };
-
     const payload = {
       offerName:          f.name,
-      type:               typeMap[f.discountType] ?? "percentage",
+      type:               f.discountType,
       code:               f.code || undefined,
-      applicableTo:       applicableMap[f.applicableFor] ?? "both",
+      applicableTo:       f.applicableFor,
       minimumOrderValue:  f.minOrder ? Number(f.minOrder) : 0,
       startDate:          f.validFrom,
       endDate:            f.validTo,
@@ -161,49 +159,87 @@ export default function Offers() {
     return payload;
   }
 
-  function saveDraft() {
-    if (!form.name.trim()) { setError("Add an offer name before saving a draft"); return; }
-    setError("");
-    setDrafts((d) => [...d, { ...form, _draftId: Date.now() }]);
-    setForm(EMPTY);
+  // Drafts live on the server: POST /discounts always creates status "draft",
+  // and PATCH …/publish promotes it to "active".
+  const drafts = useMemo(() => offers.filter((o) => o.status === "draft"), [offers]);
+
+  function validate(f) {
+    if (!f.name.trim()) return "Add an offer name";
+    if (!f.validFrom || !f.validTo) return "Start date and end date are required";
+    return "";
   }
 
-  function loadDraft(draft) {
-    setForm({ ...draft });
-    setDrafts((d) => d.filter((x) => x._draftId !== draft._draftId));
-  }
-
-  function deleteDraft(draftId) {
-    setDrafts((d) => d.filter((x) => x._draftId !== draftId));
-  }
-
-  async function publishDraft(draft) {
-    if (!draft.validFrom || !draft.validTo) {
-      setDrafts((d) => d.map((x) => x._draftId === draft._draftId ? { ...x, _error: "Add start/end dates before publishing" } : x));
-      return;
-    }
-    try {
-      await createMutation.mutateAsync(toPayload(draft));
-      deleteDraft(draft._draftId);
-    } catch (err) {
-      setDrafts((d) => d.map((x) => x._draftId === draft._draftId ? { ...x, _error: err.response?.data?.message ?? err.message } : x));
-    }
-  }
-
-  async function publish() {
-    if (!form.name.trim()) { setError("Add an offer name before publishing"); return; }
-    if (!form.validFrom || !form.validTo) { setError("Start date and end date are required"); return; }
+  async function saveDraft() {
+    const problem = validate(form);
+    if (problem) { setError(problem); return; }
     setError("");
     try {
       await createMutation.mutateAsync(toPayload(form));
       setForm(EMPTY);
     } catch (err) {
-      setError(err.response?.data?.message ?? err.message);
+      setError(err.message);
     }
   }
 
+  // Load a server draft back into the composer for editing.
+  function loadDraft(draft) {
+    setEditingOffer(draft);
+    setEditForm(fromOffer(draft));
+  }
+
+  async function deleteDraft(draftId) {
+    setError("");
+    try {
+      await deleteMutation.mutateAsync(draftId);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function publishDraft(draft) {
+    setError("");
+    try {
+      await publishMutation.mutateAsync(draft._id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  // Create then immediately publish, so "Publish" goes live in one action.
+  async function publish() {
+    const problem = validate(form);
+    if (problem) { setError(problem); return; }
+    setError("");
+    try {
+      const res = await createMutation.mutateAsync(toPayload(form));
+      const created = res.data?.data?.discount;
+      if (created?._id) await publishMutation.mutateAsync(created._id);
+      setForm(EMPTY);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  // Server discount → composer form shape.
+  function fromOffer(offer) {
+    return {
+      ...EMPTY,
+      name:          offer.offerName ?? "",
+      code:          offer.code ?? "",
+      type:          offer.code ? "coupon" : "auto",
+      discountType:  offer.type ?? "percentage",
+      discountValue: String(offer.percentage ?? offer.flatAmount ?? ""),
+      item:          offer.freeItemId ?? "",
+      minOrder:      offer.minimumOrderValue ? String(offer.minimumOrderValue) : "",
+      applicableFor: offer.applicableTo ?? "both",
+      tableNumbers:  (offer.applicableTableNumbers ?? []).join(", "),
+      validFrom:     offer.startDate ? offer.startDate.slice(0, 10) : "",
+      validTo:       offer.endDate ? offer.endDate.slice(0, 10) : "",
+    };
+  }
+
   function startEdit(offer) {
-    setEditForm({ ...EMPTY, ...offer });
+    setEditForm(fromOffer(offer));
     setEditingOffer(offer);
   }
 
@@ -218,7 +254,7 @@ export default function Offers() {
       await updateMutation.mutateAsync({ dId: editingOffer._id, body: toPayload(editForm) });
       cancelEdit();
     } catch (err) {
-      setError(err.response?.data?.message ?? err.message);
+      setError(err.message);
     }
   }
 
@@ -229,8 +265,14 @@ export default function Offers() {
 
   const saving = createMutation.isPending || updateMutation.isPending;
 
+  // The drafts panel already lists drafts — this table shows published offers.
   const visible = useMemo(
-    () => offers.filter((o) => (o.offerName ?? "").toLowerCase().includes(search.toLowerCase())),
+    () =>
+      offers.filter(
+        (o) =>
+          o.status !== "draft" &&
+          (o.offerName ?? "").toLowerCase().includes(search.toLowerCase()),
+      ),
     [offers, search],
   );
 
@@ -465,7 +507,7 @@ export default function Offers() {
               </div>
 
               {/* Percentage */}
-              {form.discountType === "percent" && (
+              {form.discountType === "percentage" && (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>Discount (%)</Label>
@@ -490,7 +532,7 @@ export default function Offers() {
               )}
 
               {/* Flat Amount */}
-              {form.discountType === "flat" && (
+              {form.discountType === "flat_amount" && (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>Offer Name</Label>
@@ -550,7 +592,7 @@ export default function Offers() {
               )}
 
               {/* Tablewise offer */}
-              {form.discountType === "tableware" && (
+              {form.discountType === "tablewise" && (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>Offer Name</Label>
@@ -685,15 +727,18 @@ export default function Offers() {
                   </div>
                   {drafts.map((draft) => (
                     <div
-                      key={draft._draftId}
+                      key={draft._id}
                       className="overflow-hidden rounded-xl border border-brand-cream bg-white"
                     >
                       <div className="flex items-start justify-between gap-2 px-3.5 pt-3.5">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-[#24190f]">{draft.name}</p>
+                          <p className="truncate text-sm font-bold text-[#24190f]">{draft.offerName}</p>
                           <p className="mt-0.5 text-xs text-muted-foreground">
-                            {discountLabel({ discountType: draft.discountType, discountValue: draft.discountValue || 0 })}
-                            {draft.type === "coupon" && draft.code ? (
+                            {discountLabel({
+                              discountType: draft.type,
+                              discountValue: draft.percentage ?? draft.flatAmount ?? 0,
+                            })}
+                            {draft.code ? (
                               <span className="ml-2 font-mono font-semibold text-brand-orange">{draft.code}</span>
                             ) : null}
                           </p>
@@ -702,9 +747,6 @@ export default function Offers() {
                           Draft
                         </span>
                       </div>
-                      {draft._error ? (
-                        <p className="px-3.5 pb-1 pt-1 text-xs text-red-500">{draft._error}</p>
-                      ) : null}
                       <div className="mt-3 grid grid-cols-3 divide-x divide-brand-cream/60 border-t border-brand-cream/60">
                         <button
                           type="button"
@@ -723,7 +765,7 @@ export default function Offers() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => deleteDraft(draft._draftId)}
+                          onClick={() => deleteDraft(draft._id)}
                           className="py-2.5 text-xs font-medium text-muted-foreground transition hover:bg-red-50 hover:text-red-500"
                         >
                           Delete

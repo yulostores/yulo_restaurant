@@ -7,7 +7,15 @@ import { useNavigate } from "react-router-dom";
 import { ChevronDown, ImagePlus, ImageUp, Plus } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
-import { useSettings, useUpdateSettings, useUpdateHours, useUpdateDelivery } from "@/hooks/owner/useSettings";
+import {
+  buildSettingsFormData,
+  useDeliverySettings,
+  useHours,
+  useSettings,
+  useUpdateDelivery,
+  useUpdateHours,
+  useUpdateSettings,
+} from "@/hooks/owner/useSettings";
 import { ownerApi } from "@/api/owner.api";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -93,8 +101,11 @@ function LegalEntitySelect({ value, onChange }) {
 
 export default function StoreSettings() {
   const navigate = useNavigate();
-  const { restaurantId, fetchRestaurants, user } = useOwnerAuth();
+  const { restaurantId, fetchRestaurants } = useOwnerAuth();
   const { data: serverSettings, isLoading, isError } = useSettings(restaurantId);
+  // Hours and delivery config have their own endpoints.
+  const { data: serverHours = [] } = useHours(restaurantId);
+  const { data: serverDelivery }   = useDeliverySettings(restaurantId);
   const updateMutation        = useUpdateSettings(restaurantId);
   const updateHoursMutation   = useUpdateHours(restaurantId);
   const updateDeliveryMutation = useUpdateDelivery(restaurantId);
@@ -108,18 +119,25 @@ export default function StoreSettings() {
   const [createError, setCreateError] = useState("");
   const [newName, setNewName]       = useState("");
   const [newAddress, setNewAddress] = useState("");
+  const [newCity, setNewCity]       = useState("");
+  const [newLat, setNewLat]         = useState("");
+  const [newLng, setNewLng]         = useState("");
+  // Optional brand images uploaded with the next save (PATCH /settings).
+  const [logoFile, setLogoFile]     = useState(null);
+  const [bannerFile, setBannerFile] = useState(null);
 
-  // Convert minutes-from-midnight number → "HH:MM" string for time inputs
-  const minsToTime = (mins) => {
-    if (mins == null) return "";
-    const h = String(Math.floor(mins / 60)).padStart(2, "0");
-    const m = String(mins % 60).padStart(2, "0");
-    return `${h}:${m}`;
+  // The hours API stores times as HHMM integers (900 = 09:00, 2200 = 22:00),
+  // so convert to and from the "HH:MM" strings the time inputs use.
+  const hhmmToTime = (value) => {
+    if (value == null) return "";
+    const n = Number(value);
+    if (Number.isNaN(n)) return "";
+    return `${String(Math.floor(n / 100)).padStart(2, "0")}:${String(n % 100).padStart(2, "0")}`;
   };
-  const timeToMins = (t) => {
+  const timeToHhmm = (t) => {
     if (!t) return 0;
     const [h, m] = t.split(":").map(Number);
-    return h * 60 + (m || 0);
+    return (h || 0) * 100 + (m || 0);
   };
 
   const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
@@ -129,7 +147,9 @@ export default function StoreSettings() {
     if (!serverSettings || seededRef.current) return;
     seededRef.current = true;
     const r = serverSettings;
-    const hoursMap = Object.fromEntries((r.operatingHours ?? []).map((h) => [h.day, h]));
+    const hoursMap = Object.fromEntries(
+      (serverHours.length ? serverHours : r.operatingHours ?? []).map((h) => [h.day, h]),
+    );
     const seeded = {
       name:         r.name ?? "",
       description:  r.description ?? "",
@@ -143,14 +163,14 @@ export default function StoreSettings() {
         day:    day.charAt(0).toUpperCase() + day.slice(1),
         dayKey: day,
         closed: !(hoursMap[day]?.isOpen ?? true),
-        open:   minsToTime(hoursMap[day]?.openTime ?? 540),
-        close:  minsToTime(hoursMap[day]?.closeTime ?? 1320),
+        open:   hhmmToTime(hoursMap[day]?.openTime ?? 900),
+        close:  hhmmToTime(hoursMap[day]?.closeTime ?? 2200),
       })),
       delivery: {
-        radiusKm:       r.delivery?.radiusKm ?? 5,
-        baseCharge:     r.delivery?.baseCharge ?? 0,
-        freeThreshold:  r.delivery?.freeThreshold ?? "",
-        estimatedTime:  r.delivery?.estimatedMinutes ?? 30,
+        radiusKm:      serverDelivery?.radiusKm      ?? r.delivery?.radiusKm      ?? 5,
+        baseCharge:    serverDelivery?.baseCharge    ?? r.delivery?.baseCharge    ?? 0,
+        freeThreshold: serverDelivery?.freeThreshold ?? r.delivery?.freeThreshold ?? "",
+        estimatedTime: serverDelivery?.estimatedMinutes ?? r.delivery?.estimatedMinutes ?? 30,
       },
       business: {
         legalEntityType: r.settings?.legalEntityType ?? "",
@@ -171,7 +191,7 @@ export default function StoreSettings() {
     };
     setSettings(seeded);
     setOriginal(JSON.stringify(seeded));
-  }, [serverSettings]);
+  }, [serverSettings, serverHours, serverDelivery]);
 
   const set = (patch) => setSettings((s) => ({ ...s, ...patch }));
   const setNested = (key, patch) =>
@@ -185,12 +205,15 @@ export default function StoreSettings() {
   async function save() {
     setSavedNote("");
     try {
-      // Main settings
-      await updateMutation.mutateAsync({
+      // Main settings — PATCH /settings is multipart/form-data so a logo or
+      // banner file can ride along with the JSON fields.
+      await updateMutation.mutateAsync(buildSettingsFormData({
         name:        settings.name,
         description: settings.description,
         cuisineTypes: settings.cuisineType ? [settings.cuisineType] : [],
         address:     { street: settings.address },
+        ...(logoFile ? { logo: logoFile } : {}),
+        ...(bannerFile ? { banner: bannerFile } : {}),
         settings: {
           legalEntityType:    settings.business?.legalEntityType      || undefined,
           ownerName:          settings.business?.ownerName            || undefined,
@@ -201,16 +224,16 @@ export default function StoreSettings() {
           registrationNo:     settings.licenses?.tradeLicense         || undefined,
           tradeLicenseExpiry: settings.licenses?.tradeLicenseExpiry   || undefined,
         },
-      });
+      }));
       // Operating hours
-      await updateHoursMutation.mutateAsync({
-        operatingHours: (settings.hours ?? []).map((h) => ({
+      await updateHoursMutation.mutateAsync(
+        (settings.hours ?? []).map((h) => ({
           day:       h.dayKey,
           isOpen:    !h.closed,
-          openTime:  timeToMins(h.open),
-          closeTime: timeToMins(h.close),
+          openTime:  timeToHhmm(h.open),
+          closeTime: timeToHhmm(h.close),
         })),
-      });
+      );
       // Delivery
       await updateDeliveryMutation.mutateAsync({
         radiusKm:         Number(settings.delivery?.radiusKm) || 5,
@@ -219,9 +242,11 @@ export default function StoreSettings() {
         estimatedMinutes: Number(settings.delivery?.estimatedTime) || 30,
       });
       setOriginal(JSON.stringify(settings));
+      setLogoFile(null);
+      setBannerFile(null);
       setSavedNote("All changes saved");
     } catch (err) {
-      setSavedNote(err.response?.data?.message ?? "Save failed");
+      setSavedNote(err.message ?? "Save failed");
     }
   }
 
@@ -237,11 +262,16 @@ export default function StoreSettings() {
     setCreating(true);
     setCreateError("");
     try {
-      await ownerApi.createRestaurant({ name: newName.trim(), address: { full: newAddress.trim() } });
+      // location.coordinates is GeoJSON order: [longitude, latitude].
+      await ownerApi.createRestaurant({
+        name: newName.trim(),
+        address: { street: newAddress.trim(), city: newCity.trim() },
+        location: { coordinates: [Number(newLng) || 0, Number(newLat) || 0] },
+      });
       await fetchRestaurants();
       navigate("/dashboard", { replace: true });
     } catch (err) {
-      setCreateError(err.response?.data?.message ?? err.message ?? "Failed to create restaurant");
+      setCreateError(err.message ?? "Failed to create restaurant");
     } finally {
       setCreating(false);
     }
@@ -249,13 +279,13 @@ export default function StoreSettings() {
 
   if (!restaurantId) {
     return (
-      <DashboardLayout profile={user}>
+      <DashboardLayout>
         <div className="flex flex-col items-center justify-center py-20">
           <Card className="w-full max-w-md">
             <CardHeader className="pb-4">
-              <h2 className="text-lg font-bold">Create Your Restaurant</h2>
+              <h2 className="text-lg font-bold">Add Your Restaurant</h2>
               <p className="text-sm text-muted-foreground">
-                Set up your restaurant profile to get started.
+                Submit your restaurant profile for platform review.
               </p>
             </CardHeader>
             <CardContent>
@@ -264,26 +294,57 @@ export default function StoreSettings() {
                   <Input
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
-                    placeholder="e.g. Saffron Kitchen"
+                    placeholder="Your restaurant name"
                     required
                   />
                 </Field>
-                <Field label="Address">
+                <Field label="Street">
                   <Input
                     value={newAddress}
                     onChange={(e) => setNewAddress(e.target.value)}
-                    placeholder="123 Main St, City"
+                    placeholder="12 Main Road"
                   />
                 </Field>
+                <Field label="City">
+                  <Input
+                    value={newCity}
+                    onChange={(e) => setNewCity(e.target.value)}
+                    placeholder="Delhi"
+                  />
+                </Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Latitude *">
+                    <Input
+                      value={newLat}
+                      onChange={(e) => setNewLat(e.target.value)}
+                      placeholder="28.6139"
+                      inputMode="decimal"
+                      required
+                    />
+                  </Field>
+                  <Field label="Longitude *">
+                    <Input
+                      value={newLng}
+                      onChange={(e) => setNewLng(e.target.value)}
+                      placeholder="77.2090"
+                      inputMode="decimal"
+                      required
+                    />
+                  </Field>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Your restaurant is submitted for admin review. Menu and staff
+                  management unlock once it&apos;s approved.
+                </p>
                 {createError && (
                   <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{createError}</p>
                 )}
                 <Button
                   type="submit"
-                  disabled={creating || !newName.trim()}
+                  disabled={creating || !newName.trim() || !newLat || !newLng}
                   className="w-full bg-brand-gradient text-white hover:brightness-105"
                 >
-                  {creating ? "Creating…" : "Create Restaurant"}
+                  {creating ? "Submitting…" : "Submit for review"}
                 </Button>
               </form>
             </CardContent>
@@ -295,14 +356,14 @@ export default function StoreSettings() {
 
   if (isError) {
     return (
-      <DashboardLayout profile={user}>
+      <DashboardLayout>
         <p className="text-muted-foreground">Failed to load store settings.</p>
       </DashboardLayout>
     );
   }
   if (isLoading || !settings) {
     return (
-      <DashboardLayout profile={user}>
+      <DashboardLayout>
         <p className="text-muted-foreground">Loading store settings…</p>
       </DashboardLayout>
     );
@@ -366,17 +427,55 @@ export default function StoreSettings() {
             <CardContent className="space-y-4">
               <div>
                 <Label className="text-xs uppercase tracking-wide text-brand-red">Store Logo</Label>
-                <label className="mt-1.5 flex h-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-muted-foreground hover:border-brand-orange/50">
-                  <ImageUp className="h-5 w-5" />
-                  <span className="text-xs">Upload Image</span>
+                <label className="mt-1.5 flex h-24 cursor-pointer flex-col items-center justify-center gap-1 overflow-hidden rounded-xl border-2 border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-muted-foreground hover:border-brand-orange/50">
+                  {logoFile ? (
+                    <img src={URL.createObjectURL(logoFile)} alt="Logo preview" className="h-full w-full object-contain" />
+                  ) : serverSettings?.logo ? (
+                    <img src={serverSettings.logo} alt="Current logo" className="h-full w-full object-contain" />
+                  ) : (
+                    <>
+                      <ImageUp className="h-5 w-5" />
+                      <span className="text-xs">Upload image (max 5 MB)</span>
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
+                  />
                 </label>
+                {logoFile ? (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {logoFile.name} — uploads on save
+                  </p>
+                ) : null}
               </div>
               <div>
                 <Label className="text-xs uppercase tracking-wide text-brand-red">Banner Image</Label>
-                <label className="mt-1.5 flex h-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-muted-foreground hover:border-brand-orange/50">
-                  <ImagePlus className="h-5 w-5" />
-                  <span className="text-xs">1920×1080 recommended</span>
+                <label className="mt-1.5 flex h-24 cursor-pointer flex-col items-center justify-center gap-1 overflow-hidden rounded-xl border-2 border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-muted-foreground hover:border-brand-orange/50">
+                  {bannerFile ? (
+                    <img src={URL.createObjectURL(bannerFile)} alt="Banner preview" className="h-full w-full object-cover" />
+                  ) : serverSettings?.coverImage ? (
+                    <img src={serverSettings.coverImage} alt="Current banner" className="h-full w-full object-cover" />
+                  ) : (
+                    <>
+                      <ImagePlus className="h-5 w-5" />
+                      <span className="text-xs">1920×1080 recommended</span>
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => setBannerFile(e.target.files?.[0] ?? null)}
+                  />
                 </label>
+                {bannerFile ? (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {bannerFile.name} — uploads on save
+                  </p>
+                ) : null}
               </div>
             </CardContent>
           </Card>

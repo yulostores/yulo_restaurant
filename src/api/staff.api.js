@@ -1,65 +1,81 @@
 import client from "./client";
 
-// All staff routes require staffToken (sent via Authorization: Bearer header)
-// Attach { _staff: true } so the request interceptor uses staffToken instead of accessToken
+// All staff routes require the staffToken (Authorization: Bearer <staffToken>).
+// Attach { _staff: true } so the request interceptor picks it over accessToken.
 
-const S = { _staff: true };  // shorthand config flag
+const S = { _staff: true }; // shorthand config flag
+
+function idempotencyKey() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 export const staffApi = {
-  // ── Kitchen (Chef) ───────────────────────────────────────────────
-  // GET /api/staff/:restaurantId/kitchen/queue
-  // Returns orders in "pending" (upcoming) state
+  // ── Kitchen / KDS (role: chef) ───────────────────────────────────
+  // Active orders with status "placed" or "confirmed", oldest first.
   getQueue: (restaurantId) =>
     client.get(`/staff/${restaurantId}/kitchen/queue`, S),
 
-  // GET /api/staff/:restaurantId/kitchen/board
-  // Returns { preparing: [], ready: [], completed: [] } buckets
+  // Kanban buckets: { placed, confirmed, preparing, ready }
   getBoard: (restaurantId) =>
     client.get(`/staff/${restaurantId}/kitchen/board`, S),
 
-  // PATCH /api/staff/:restaurantId/kitchen/orders/:orderId/status
-  // body: { orderStatus: "preparing" | "ready" | "completed" }
-  updateOrderStatus: (restaurantId, orderId, newStatus) =>
-    client.patch(
-      `/staff/${restaurantId}/kitchen/orders/${orderId}/status`,
-      { newStatus },
-      S,
-    ),
-
-  // GET /api/staff/:restaurantId/kitchen/orders/:orderId
   getOrderDetail: (restaurantId, orderId) =>
     client.get(`/staff/${restaurantId}/kitchen/orders/${orderId}`, S),
 
-  // ── Waiter ───────────────────────────────────────────────────────
-  // GET /api/staff/:restaurantId/waiter/tables
+  // Optimistic concurrency control — the server rejects the write with
+  // 409 CONCURRENT_UPDATE if `currentStatus` no longer matches.
+  // Allowed transitions (API.md):
+  //   placed    -> confirmed | cancelled
+  //   confirmed -> preparing | cancelled
+  //   preparing -> ready     | cancelled
+  //   ready     -> out_for_delivery | delivered | cancelled
+  updateOrderStatus: (restaurantId, orderId, currentStatus, newStatus) =>
+    client.patch(
+      `/staff/${restaurantId}/kitchen/orders/${orderId}/status`,
+      { currentStatus, newStatus },
+      S,
+    ),
+
+  // Refetches the order and retries once when another client won the race.
+  async updateOrderStatusWithRetry(restaurantId, orderId, currentStatus, newStatus) {
+    try {
+      return await staffApi.updateOrderStatus(restaurantId, orderId, currentStatus, newStatus);
+    } catch (err) {
+      if (err.code !== "CONCURRENT_UPDATE") throw err;
+      const { data } = await staffApi.getOrderDetail(restaurantId, orderId);
+      const fresh = data.data.order.status;
+      return staffApi.updateOrderStatus(restaurantId, orderId, fresh, newStatus);
+    }
+  },
+
+  // ── Waiter (role: waiter) ────────────────────────────────────────
+  // qrToken is the table's _id, taken from the `tableId` query param of the
+  // scanned QR URL (…/menu?restaurantId=<id>&tableId=<id>).
+  scanTable: (restaurantId, qrToken) =>
+    client.post(`/staff/${restaurantId}/waiter/tables/scan`, { qrToken }, S),
+
   getTables: (restaurantId) =>
     client.get(`/staff/${restaurantId}/waiter/tables`, S),
 
-  // POST /api/staff/:restaurantId/waiter/tables/scan
-  // body: { qrPayload: string }
-  scanTable: (restaurantId, qrPayload) =>
-    client.post(`/staff/${restaurantId}/waiter/tables/scan`, { qrPayload }, S),
-
-  // GET /api/staff/:restaurantId/waiter/menu
   getMenu: (restaurantId) =>
     client.get(`/staff/${restaurantId}/waiter/menu`, S),
 
-  // POST /api/staff/:restaurantId/waiter/orders
-  // body: { tableId, items: [{ menuItemId, quantity }], notes? }
+  // body: { tableSessionId, items: [{ menuItemId, quantity }], specialInstructions? }
   createOrder: (restaurantId, body) =>
-    client.post(`/staff/${restaurantId}/waiter/orders`, body, S),
+    client.post(`/staff/${restaurantId}/waiter/orders`, body, {
+      ...S,
+      headers: { "Idempotency-Key": idempotencyKey() },
+    }),
 
-  // GET /api/staff/:restaurantId/waiter/sessions
-  // Returns active table sessions with their orders
+  // Open table sessions with their orders and a runningTotal.
   getSessions: (restaurantId) =>
     client.get(`/staff/${restaurantId}/waiter/sessions`, S),
 
-  // GET /api/staff/:restaurantId/waiter/sessions/:sessionId/bill
   getBill: (restaurantId, sessionId) =>
     client.get(`/staff/${restaurantId}/waiter/sessions/${sessionId}/bill`, S),
 
-  // POST /api/staff/:restaurantId/waiter/sessions/:sessionId/bill/mark-paid
-  // body: { paymentMethod: "cash" | "upi" | "card" }
+  // paymentMethod: "cash" | "upi" | "card" | "online"
   markPaid: (restaurantId, sessionId, paymentMethod = "cash") =>
     client.post(
       `/staff/${restaurantId}/waiter/sessions/${sessionId}/bill/mark-paid`,

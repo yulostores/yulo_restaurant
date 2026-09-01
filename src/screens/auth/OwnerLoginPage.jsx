@@ -7,7 +7,7 @@ export default function OwnerLoginPage() {
   const { login, signup } = useOwnerAuth();
 
   const [mode, setMode]     = useState("login");
-  const [form, setForm]     = useState({ name: "", email: "", password: "" });
+  const [form, setForm]     = useState({ name: "", email: "", password: "", phone: "" });
   const [error, setError]   = useState("");
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
@@ -24,7 +24,12 @@ export default function OwnerLoginPage() {
       if (mode === "login") {
         await login({ email: form.email, password: form.password });
       } else {
-        await signup({ name: form.name, email: form.email, password: form.password });
+        await signup({
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          phone: form.phone || undefined,
+        });
       }
       navigate("/dashboard", { replace: true });
     } catch (err) {
@@ -140,6 +145,23 @@ export default function OwnerLoginPage() {
                     onChange={handleChange}
                     placeholder="Your name"
                     required
+                    minLength={2}
+                    className="w-full rounded-xl border border-[#F5DFCE] bg-[#FFFAF7] px-4 py-3 text-sm text-[#23180E] placeholder-[#c4aa96] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"
+                  />
+                </div>
+              )}
+
+              {mode === "signup" && (
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
+                    Phone (optional)
+                  </label>
+                  <input
+                    name="phone"
+                    value={form.phone}
+                    onChange={handleChange}
+                    placeholder="9876543210"
+                    inputMode="numeric"
                     className="w-full rounded-xl border border-[#F5DFCE] bg-[#FFFAF7] px-4 py-3 text-sm text-[#23180E] placeholder-[#c4aa96] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"
                   />
                 </div>

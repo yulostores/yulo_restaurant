@@ -1,7 +1,10 @@
-// Waiter portal (/waiter/*) — Figma nodes 17:362 (dashboard) & 17:513 (menu).
-// A light-sidebar staff portal with shared "active table + running order" state
-// so the waiter can build an order on the Menu screen and place it from the
-// Dashboard (PRD §11).
+// Waiter portal (/waiter/*). A light staff portal with shared "active table
+// session + running order" state so the waiter can build an order on the Menu
+// screen and fire it from the Dashboard.
+//
+// Orders are placed against a tableSessionId (POST /api/staff/:rId/waiter/orders),
+// which is opened by scanning the table QR — so the active table is always a
+// real session from the server, never a placeholder.
 
 import { createContext, useContext, useMemo, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
@@ -21,41 +24,49 @@ export function useWaiter() {
 }
 
 export default function WaiterApp() {
-  const [activeTable, setActiveTable] = useState("T-08");
+  // { sessionId, tableId, identifier } — null until a table is scanned/picked.
+  const [activeTable, setActiveTable] = useState(null);
   const [cart, setCart] = useState([]);
 
   const api = useMemo(() => {
-    function addToCart(item) {
+    // `item` is a menu item from the API: _id, name, effectivePrice, foodType.
+    function addToCart(item, quantity = 1) {
       setCart((current) => {
-        const existing = current.find((line) => line.id === item.id);
+        const existing = current.find((line) => line.menuItemId === item._id);
         if (existing) {
           return current.map((line) =>
-            line.id === item.id ? { ...line, quantity: line.quantity + 1 } : line,
+            line.menuItemId === item._id
+              ? { ...line, quantity: line.quantity + quantity }
+              : line,
           );
         }
         return [
           ...current,
           {
-            id: item.id,
+            menuItemId: item._id,
             name: item.name,
-            price: item.price,
+            price: item.effectivePrice ?? item.discountedPrice ?? item.sellingPrice ?? 0,
             foodType: item.foodType,
-            quantity: 1,
-            note: "",
+            quantity,
           },
         ];
       });
     }
-    function setQuantity(id, quantity) {
+
+    function setQuantity(menuItemId, quantity) {
       setCart((current) =>
         quantity <= 0
-          ? current.filter((line) => line.id !== id)
-          : current.map((line) => (line.id === id ? { ...line, quantity } : line)),
+          ? current.filter((line) => line.menuItemId !== menuItemId)
+          : current.map((line) =>
+              line.menuItemId === menuItemId ? { ...line, quantity } : line,
+            ),
       );
     }
+
     function clearCart() {
       setCart([]);
     }
+
     return { addToCart, setQuantity, clearCart };
   }, []);
 

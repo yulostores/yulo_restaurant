@@ -4,10 +4,16 @@ import { ChefHat, Search, UtensilsCrossed, X } from "lucide-react";
 import { useStaffAuth } from "@/context/StaffAuthContext";
 import client from "@/api/client";
 
+// GET /api/restaurants has no name-search parameter (only lat/lng/radius/
+// cuisine/page/limit), so we page through the public list and match locally.
+// See API-GAPS.md — a `search` param here would remove the round trip.
 async function searchRestaurants(q) {
-  if (!q.trim()) return [];
-  const { data } = await client.get("/restaurants", { params: { q: q.trim() } });
-  return data.data.restaurants ?? [];
+  const term = q.trim().toLowerCase();
+  if (!term) return [];
+  const { data } = await client.get("/restaurants", { params: { limit: 50 } });
+  return (data.data.restaurants ?? [])
+    .filter((r) => r.name?.toLowerCase().includes(term))
+    .slice(0, 10);
 }
 
 export default function StaffLoginPage() {
@@ -21,7 +27,6 @@ export default function StaffLoginPage() {
   const [showDrop, setShowDrop]   = useState(false);
   const debounceRef               = useRef(null);
 
-  const [staffCode, setStaffCode] = useState("");
   const [pin, setPin]             = useState("");
   const [showPw, setShowPw]       = useState(false);
   const [error, setError]         = useState("");
@@ -56,24 +61,19 @@ export default function StaffLoginPage() {
   function clearRestaurant() {
     setSelected(null);
     setQuery("");
-    setStaffCode("");
     setPin("");
     setError("");
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!selected)         { setError("Please select your restaurant first"); return; }
-    if (!staffCode.trim()) { setError("Enter your Staff Code (e.g. W01, C02)"); return; }
-    if (pin.length < 4)    { setError("PIN must be at least 4 digits"); return; }
+    if (!selected)      { setError("Please select your restaurant first"); return; }
+    if (pin.length < 4) { setError("PIN must be at least 4 digits"); return; }
     setError("");
     setLoading(true);
     try {
-      const staff = await login({
-        restaurantId: selected._id,
-        staffCode: staffCode.trim().toUpperCase(),
-        pin,
-      });
+      // The server identifies the staff member from restaurantId + PIN alone.
+      const staff = await login({ restaurantId: selected._id, pin });
       if (staff.role === "waiter") navigate("/waiter", { replace: true });
       else if (staff.role === "chef") navigate("/chef", { replace: true });
       else navigate("/", { replace: true });
@@ -254,27 +254,9 @@ export default function StaffLoginPage() {
                 )}
               </div>
 
-              {/* Staff code + PIN (shown after restaurant selected) */}
+              {/* PIN (shown after restaurant selected) */}
               {selected && (
                 <>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#8a6f5a]">
-                      Staff Code
-                    </label>
-                    <input
-                      value={staffCode}
-                      onChange={(e) => setStaffCode(e.target.value.toUpperCase())}
-                      placeholder="W01  ·  C02"
-                      autoFocus
-                      required
-                      style={{ background: "#1A120A", border: "1px solid #3A2515" }}
-                      className="w-full rounded-xl px-4 py-3 text-center font-mono text-xl tracking-[0.3em] text-white placeholder-[#5a3f2a] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"
-                    />
-                    <p className="mt-1.5 text-center text-xs text-[#5a3f2a]">
-                      Waiter → W01, W02 &nbsp;·&nbsp; Chef → C01, C02
-                    </p>
-                  </div>
-
                   <div>
                     <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#8a6f5a]">
                       PIN
@@ -286,6 +268,7 @@ export default function StaffLoginPage() {
                         value={pin}
                         onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
                         placeholder="· · · ·"
+                        autoFocus
                         required
                         style={{ background: "#1A120A", border: "1px solid #3A2515" }}
                         className="w-full rounded-xl px-4 py-3 pr-12 text-center text-xl tracking-[0.5em] text-white placeholder-[#5a3f2a] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"

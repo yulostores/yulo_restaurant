@@ -8,7 +8,7 @@ export const waiterKeys = {
   bill:     (rId, sessionId) => ["waiter", rId, "bill", sessionId],
 };
 
-// ── Active table sessions (orders grouped by table) ──────────────────
+// ── Open table sessions, each with its orders and a runningTotal ─────
 export function useWaiterSessions(restaurantId) {
   return useQuery({
     queryKey: waiterKeys.sessions(restaurantId),
@@ -19,17 +19,18 @@ export function useWaiterSessions(restaurantId) {
   });
 }
 
-// ── Menu for placing orders ──────────────────────────────────────────
+// ── Menu for placing orders — same shape as the public menu endpoint ─
+// { menu: [{ _id, name, subCategories: [{ _id, name, items }], items }] }
 export function useWaiterMenu(restaurantId) {
   return useQuery({
     queryKey: waiterKeys.menu(restaurantId),
-    queryFn: () => staffApi.getMenu(restaurantId).then((r) => r.data.data),
+    queryFn: () => staffApi.getMenu(restaurantId).then((r) => r.data.data.menu ?? []),
     enabled: !!restaurantId,
     staleTime: 5 * 60_000, // menu rarely changes during service
   });
 }
 
-// ── Tables list ──────────────────────────────────────────────────────
+// ── Tables, each with its current open session (or null) ─────────────
 export function useWaiterTables(restaurantId) {
   return useQuery({
     queryKey: waiterKeys.tables(restaurantId),
@@ -39,17 +40,18 @@ export function useWaiterTables(restaurantId) {
   });
 }
 
-// ── Bill for a session ───────────────────────────────────────────────
+// ── Bill for a session (idempotent — safe to call repeatedly) ────────
 export function useSessionBill(restaurantId, sessionId) {
   return useQuery({
     queryKey: waiterKeys.bill(restaurantId, sessionId),
-    queryFn: () => staffApi.getBill(restaurantId, sessionId).then((r) => r.data.data),
+    queryFn: () => staffApi.getBill(restaurantId, sessionId).then((r) => r.data.data.bill),
     enabled: !!restaurantId && !!sessionId,
     staleTime: 30_000,
   });
 }
 
-// ── Create order (place new order for a table) ───────────────────────
+// ── Create a dine-in order for an open table session ─────────────────
+// body: { tableSessionId, items: [{ menuItemId, quantity }], specialInstructions? }
 export function useCreateOrder(restaurantId) {
   const qc = useQueryClient();
 
@@ -57,11 +59,12 @@ export function useCreateOrder(restaurantId) {
     mutationFn: (body) => staffApi.createOrder(restaurantId, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: waiterKeys.sessions(restaurantId) });
+      qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
     },
   });
 }
 
-// ── Mark bill as paid ─────────────────────────────────────────────────
+// ── Close the bill and free the table ────────────────────────────────
 export function useMarkPaid(restaurantId) {
   const qc = useQueryClient();
 
@@ -70,14 +73,20 @@ export function useMarkPaid(restaurantId) {
       staffApi.markPaid(restaurantId, sessionId, paymentMethod),
     onSuccess: (_data, { sessionId }) => {
       qc.invalidateQueries({ queryKey: waiterKeys.sessions(restaurantId) });
+      qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
       qc.invalidateQueries({ queryKey: waiterKeys.bill(restaurantId, sessionId) });
     },
   });
 }
 
-// ── Scan table QR ────────────────────────────────────────────────────
+// ── Scan a table QR — qrToken is the tableId from the QR URL ─────────
 export function useScanTable(restaurantId) {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: (qrPayload) => staffApi.scanTable(restaurantId, qrPayload),
+    mutationFn: (qrToken) => staffApi.scanTable(restaurantId, qrToken),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: waiterKeys.sessions(restaurantId) });
+      qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
+    },
   });
 }

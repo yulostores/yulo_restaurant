@@ -1,41 +1,59 @@
-// QR landing screen — entry point after scanning a table/counter QR. Reads the
-// restaurant + table/counter context from the URL, loads restaurant info, and
-// routes the customer into login (if unverified) or the menu (PRD §5, §6).
+// QR landing screen — the entry point after scanning a table QR. The QR URL
+// carries ?restaurantId=&tableId=, which CustomerApp writes into the session.
+// Restaurant details come from GET /api/restaurants/:id.
 
-import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Clock, MapPin, QrCode, Star, Utensils } from "lucide-react";
 
-import { requestJson } from "@/api";
+import { useRestaurant } from "@/hooks/customer/useMenu";
 import CustomerLayout, { formatPrice } from "./CustomerLayout";
 import { useCustomer } from "./CustomerApp";
 
+// The API returns openingHours as { monday: { open, close }, … } in 24h strings.
+function todayHours(openingHours) {
+  if (!openingHours) return null;
+  const day = new Date().toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+  const slot = openingHours[day];
+  if (!slot?.open || !slot?.close) return null;
+  return `${slot.open} – ${slot.close}`;
+}
+
+function addressLine(address) {
+  if (!address) return null;
+  return [address.street, address.city, address.state, address.pincode]
+    .filter(Boolean)
+    .join(", ");
+}
+
 export default function QrLanding() {
-  const [params] = useSearchParams();
   const navigate = useNavigate();
-  const { session, setSession, cartTotal } = useCustomer();
-  const [restaurant, setRestaurant] = useState(null);
-  const [error, setError] = useState("");
+  const { session, cartTotal, auth } = useCustomer();
 
-  const tableNumber = params.get("tableNumber") ?? "";
-  const orderType = params.get("orderType") ?? (tableNumber ? "dine-in" : "counter");
-
-  useEffect(() => {
-    // Capture the QR context so it survives the OTP redirect.
-    setSession((current) => ({ ...current, tableNumber, orderType }));
-  }, [tableNumber, orderType, setSession]);
-
-  useEffect(() => {
-    requestJson("/customer/menu")
-      .then((payload) => setRestaurant(payload.data.restaurant))
-      .catch((err) => setError(err.message));
-  }, []);
+  const { data: restaurant, isLoading, isError, error } = useRestaurant(session.restaurantId);
 
   function start() {
-    navigate(session.verified ? "/order/menu" : "/order/login");
+    navigate(auth.isAuthenticated ? "/order/menu" : "/order/login");
   }
 
-  const closed = restaurant && restaurant.status !== "open";
+  // No restaurant in the URL or the stored session — the QR wasn't scanned.
+  if (!session.restaurantId) {
+    return (
+      <CustomerLayout>
+        <div className="flex min-h-screen flex-col items-center justify-center gap-3 px-8 text-center">
+          <QrCode className="h-10 w-10 text-brand-orange" />
+          <h1 className="text-xl font-bold">Scan a table QR to start</h1>
+          <p className="text-sm text-muted-foreground">
+            This page needs a restaurant to open. Scan the QR code on your table,
+            or use the link your restaurant shared.
+          </p>
+        </div>
+      </CustomerLayout>
+    );
+  }
+
+  const hours = todayHours(restaurant?.openingHours);
+  const address = addressLine(restaurant?.address);
+  const closed = restaurant && restaurant.isOpen === false;
 
   return (
     <CustomerLayout>
@@ -45,45 +63,61 @@ export default function QrLanding() {
             <QrCode className="h-4 w-4" /> Scan successful
           </div>
           <h1 className="mt-3 text-2xl font-bold">Welcome to</h1>
-          <p className="text-3xl font-extrabold">{restaurant?.name ?? "…"}</p>
-          {restaurant?.tagline ? (
-            <p className="mt-1 text-sm opacity-90">{restaurant.tagline}</p>
+          <p className="text-3xl font-extrabold">
+            {isLoading ? "…" : restaurant?.name ?? "This restaurant"}
+          </p>
+          {restaurant?.description ? (
+            <p className="mt-1 text-sm opacity-90">{restaurant.description}</p>
           ) : null}
         </div>
 
         <div className="-mt-6 flex-1 space-y-4 rounded-t-3xl bg-brand-page px-5 pt-6">
-          {error ? <p className="text-sm text-brand-maroon">{error}</p> : null}
+          {isError ? (
+            <p className="text-sm text-brand-maroon">Couldn&apos;t load this restaurant: {error.message}</p>
+          ) : null}
 
           <div className="rounded-2xl border border-brand-cream/70 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-orange/10 px-3 py-1 text-xs font-bold text-brand-orange">
                 <Utensils className="h-3.5 w-3.5" />
-                {tableNumber ? `Table ${tableNumber}` : orderType === "counter" ? "Counter order" : "Takeaway"}
+                {session.tableId ? "Dine-in" : "Ordering"}
               </span>
-              <span
-                className={`rounded-full px-3 py-1 text-xs font-bold ${
-                  closed ? "bg-[#FCE9E4] text-brand-maroon" : "bg-[#E8F5EC] text-brand-green"
-                }`}
-              >
-                {closed ? "Closed" : "Open now"}
-              </span>
+              {restaurant ? (
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-bold ${
+                    closed ? "bg-[#FCE9E4] text-brand-maroon" : "bg-[#E8F5EC] text-brand-green"
+                  }`}
+                >
+                  {closed ? "Closed" : "Open now"}
+                </span>
+              ) : null}
             </div>
 
             {restaurant ? (
               <div className="mt-4 space-y-2 text-sm text-muted-foreground">
-                <p className="flex items-center gap-2">
-                  <Star className="h-4 w-4 fill-brand-saffron text-brand-saffron" />
-                  <span className="font-semibold text-foreground">{restaurant.rating}</span>
-                  ({restaurant.reviews.toLocaleString("en-IN")} reviews)
-                </p>
-                <p className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4" /> {restaurant.address}
-                </p>
-                <p className="flex items-center gap-2">
-                  <Clock className="h-4 w-4" /> {restaurant.timing}
-                </p>
+                {restaurant.avgRating ? (
+                  <p className="flex items-center gap-2">
+                    <Star className="h-4 w-4 fill-brand-saffron text-brand-saffron" />
+                    <span className="font-semibold text-foreground">{restaurant.avgRating}</span>
+                    ({Number(restaurant.totalRatings ?? 0).toLocaleString("en-IN")} reviews)
+                  </p>
+                ) : null}
+                {address ? (
+                  <p className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 shrink-0" /> {address}
+                  </p>
+                ) : null}
+                {hours ? (
+                  <p className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 shrink-0" /> {hours}
+                  </p>
+                ) : null}
               </div>
-            ) : null}
+            ) : (
+              <p className="mt-4 text-sm text-muted-foreground">
+                {isLoading ? "Loading restaurant…" : ""}
+              </p>
+            )}
           </div>
 
           {closed ? (
@@ -99,7 +133,7 @@ export default function QrLanding() {
             onClick={start}
             className="w-full rounded-xl bg-brand-gradient py-3.5 text-base font-bold text-white transition hover:brightness-105"
           >
-            {session.verified ? "Browse Menu" : "Start Ordering"}
+            {auth.isAuthenticated ? "Browse Menu" : "Start Ordering"}
           </button>
           {cartTotal > 0 ? (
             <p className="mt-2 text-center text-xs text-muted-foreground">

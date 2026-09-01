@@ -1,117 +1,156 @@
-// Item detail view — full description, rating, veg indicator, quantity selector
-// and special instructions before adding to cart (PRD §8.1 MENU-01, §8.2 CART-04).
+// Item detail — the item is looked up in the restaurant menu returned by
+// GET /api/restaurants/:id/menu (there is no single-menu-item public endpoint).
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Minus, Plus, Star } from "lucide-react";
+import { Minus, Plus } from "lucide-react";
 
-import { requestJson } from "@/api";
+import { flattenMenu, useRestaurantMenu } from "@/hooks/customer/useMenu";
 import CustomerLayout, { FoodThumb, VegDot, formatPrice } from "./CustomerLayout";
 import { useCustomer } from "./CustomerApp";
 
 export default function ItemDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { addToCart } = useCustomer();
-  const [item, setItem] = useState(null);
-  const [error, setError] = useState("");
+  const { session, addToCart } = useCustomer();
+
+  const { data: menu = [], isLoading, isError, error } = useRestaurantMenu(session.restaurantId);
+
   const [quantity, setQuantity] = useState(1);
   const [instructions, setInstructions] = useState("");
 
-  useEffect(() => {
-    requestJson("/customer/menu")
-      .then((payload) => {
-        const found = payload.data.items.find((i) => i.id === id);
-        if (!found) setError("Item not found");
-        else setItem(found);
-      })
-      .catch((err) => setError(err.message));
-  }, [id]);
+  const item = useMemo(
+    () => flattenMenu(menu).find((i) => String(i._id) === String(id)) ?? null,
+    [menu, id],
+  );
 
-  if (error) {
+  if (isError) {
     return (
-      <CustomerLayout title="Item" showBack>
-        <p className="px-5 py-8 text-sm text-muted-foreground">{error}</p>
+      <CustomerLayout title="Dish" showBack>
+        <p className="px-5 py-10 text-center text-sm text-brand-maroon">
+          Couldn&apos;t load this dish: {error.message}
+        </p>
       </CustomerLayout>
     );
   }
+
+  if (isLoading) {
+    return (
+      <CustomerLayout title="Dish" showBack>
+        <p className="px-5 py-10 text-center text-sm text-muted-foreground">Loading…</p>
+      </CustomerLayout>
+    );
+  }
+
   if (!item) {
     return (
-      <CustomerLayout title="Item" showBack>
-        <p className="px-5 py-8 text-sm text-muted-foreground">Loading…</p>
+      <CustomerLayout title="Dish" showBack>
+        <p className="px-5 py-10 text-center text-sm text-muted-foreground">
+          This dish is no longer on the menu.
+        </p>
       </CustomerLayout>
     );
   }
 
-  function handleAdd() {
-    addToCart(item, quantity, instructions);
+  const unitPrice = item.effectivePrice ?? item.sellingPrice ?? 0;
+  const unavailable = item.isAvailable === false;
+
+  function add() {
+    addToCart(item, quantity, instructions.trim());
     navigate("/order/menu");
   }
 
-  const footer = item.available ? (
-    <div className="flex items-center gap-3">
-      <div className="flex items-center gap-3 rounded-xl border border-brand-cream/80 bg-white px-3 py-2.5">
-        <button type="button" onClick={() => setQuantity((q) => Math.max(1, q - 1))} aria-label="Decrease">
-          <Minus className="h-4 w-4 text-brand-orange" />
-        </button>
-        <span className="w-5 text-center font-bold">{quantity}</span>
-        <button type="button" onClick={() => setQuantity((q) => q + 1)} aria-label="Increase">
-          <Plus className="h-4 w-4 text-brand-orange" />
-        </button>
-      </div>
-      <button
-        type="button"
-        onClick={handleAdd}
-        className="flex flex-1 items-center justify-between rounded-xl bg-brand-gradient px-4 py-3 text-white transition hover:brightness-105"
-      >
-        <span className="text-sm font-bold">Add to Cart</span>
-        <span className="text-sm font-bold">{formatPrice(item.price * quantity)}</span>
-      </button>
-    </div>
-  ) : (
-    <div className="rounded-xl bg-[#F3F4F6] py-3 text-center text-sm font-semibold text-muted-foreground">
-      Currently unavailable
-    </div>
+  const footer = (
+    <button
+      type="button"
+      onClick={add}
+      disabled={unavailable}
+      className="flex w-full items-center justify-between rounded-xl bg-brand-gradient px-4 py-3.5 text-white transition hover:brightness-105 disabled:opacity-50"
+    >
+      <span className="text-sm font-semibold">
+        {unavailable ? "Currently unavailable" : "Add to cart"}
+      </span>
+      <span className="text-base font-bold">{formatPrice(unitPrice * quantity)}</span>
+    </button>
   );
 
   return (
-    <CustomerLayout title="Item details" showBack footer={footer}>
-      <FoodThumb src={item.image} alt={item.name} className="h-60 w-full" />
+    <CustomerLayout title={item.name} showBack footer={footer}>
+      <FoodThumb src={item.image} alt={item.name} className="h-56 w-full" />
 
-      <div className="space-y-4 px-5 py-5">
-        <div className="flex items-center gap-2">
-          <VegDot type={item.foodType} />
-          <span className="text-xs font-medium text-muted-foreground">
-            {item.foodType === "veg" ? "Veg" : "Non-Veg"}
-          </span>
-          {item.popular ? (
-            <span className="rounded bg-brand-saffron/20 px-1.5 py-0.5 text-[10px] font-bold text-brand-orange">
-              POPULAR
+      <div className="space-y-5 px-5 py-5">
+        <div>
+          <div className="flex items-center gap-2">
+            <VegDot type={item.foodType} />
+            <h2 className="text-xl font-bold">{item.name}</h2>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {item.categoryName}
+            {item.subCategoryName ? ` · ${item.subCategoryName}` : ""}
+            {item.prepTime ? ` · ${item.prepTime} min prep` : ""}
+          </p>
+        </div>
+
+        {item.description ? (
+          <p className="text-sm leading-relaxed text-muted-foreground">{item.description}</p>
+        ) : null}
+
+        <div className="flex items-baseline gap-2">
+          <span className="text-2xl font-bold text-brand-red">{formatPrice(unitPrice)}</span>
+          {item.discountedPrice && item.discountedPrice < item.sellingPrice ? (
+            <span className="text-sm text-muted-foreground line-through">
+              {formatPrice(item.sellingPrice)}
             </span>
           ) : null}
         </div>
 
+        {item.ingredients?.length ? (
+          <div>
+            <p className="mb-2 text-sm font-bold">Ingredients</p>
+            <div className="flex flex-wrap gap-1.5">
+              {item.ingredients.map((ing) => (
+                <span
+                  key={ing}
+                  className="rounded-full bg-brand-cream/40 px-3 py-1 text-xs capitalize text-[#5a403e]"
+                >
+                  {ing}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div>
-          <h2 className="text-xl font-bold">{item.name}</h2>
-          <div className="mt-1 flex items-center gap-3">
-            <span className="flex items-center gap-1 text-sm text-muted-foreground">
-              <Star className="h-4 w-4 fill-brand-saffron text-brand-saffron" />
-              {item.rating}
-            </span>
-            <span className="text-lg font-bold text-brand-red">{formatPrice(item.price)}</span>
+          <p className="mb-2 text-sm font-bold">Quantity</p>
+          <div className="flex w-fit items-center gap-4 rounded-xl border border-brand-cream bg-white px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+              className="grid h-7 w-7 place-items-center rounded-lg bg-brand-cream/40 text-[#5a403e]"
+              aria-label="Decrease quantity"
+            >
+              <Minus className="h-4 w-4" />
+            </button>
+            <span className="w-6 text-center font-bold">{quantity}</span>
+            <button
+              type="button"
+              onClick={() => setQuantity((q) => q + 1)}
+              className="grid h-7 w-7 place-items-center rounded-lg bg-brand-cream/40 text-[#5a403e]"
+              aria-label="Increase quantity"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
-        <p className="text-sm leading-relaxed text-muted-foreground">{item.description}</p>
-
         <div>
-          <label className="mb-1.5 block text-sm font-semibold">Special instructions</label>
+          <label className="mb-2 block text-sm font-bold">Special instructions</label>
           <textarea
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
-            rows={3}
             placeholder="e.g. Less spicy, no onions"
-            className="w-full resize-none rounded-xl border border-brand-cream/80 bg-white px-4 py-3 text-sm outline-none focus:border-brand-orange"
+            rows={3}
+            className="w-full resize-none rounded-xl border border-brand-cream bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-orange"
           />
         </div>
       </div>

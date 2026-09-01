@@ -8,54 +8,58 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
 /* ── Normalize backend Order → UI shape ──────────────────────────────
-   Backend fields: _id, type, tableNumber, items[].name, status,
-                   specialInstructions, subtotal
-   UI expects:     id, number, table, orderType, items[].title, status,
-                   orderStatus, instructions
+   Server fields (API.md § Kitchen): _id, type, status, batchNumber,
+   tableSessionId, items[{ menuItemId, name, quantity, price }],
+   subtotal, specialInstructions, createdAt.
+   Dine-in orders belong to a table SESSION — the raw table number is not on
+   the order, so the batch number identifies the ticket on the pass.
 */
 function normalizeOrder(o) {
   return {
-    id:               String(o._id),
-    number:           String(o._id).slice(-5),
-    table:            o.tableNumber ?? "—",
-    orderType:        o.type ?? "dine_in",
-    items:            (o.items ?? []).map((i) => ({ ...i, title: i.name })),
-    status:           o.status,
-    orderStatus:      o.status,
-    instructions:     o.specialInstructions ?? "",
-    batches:          null,
-    estimatedMinutes: null,
-    assignedChef:     null,
+    id:           String(o._id),
+    number:       String(o._id).slice(-5).toUpperCase(),
+    batchNumber:  o.batchNumber ?? null,
+    sessionId:    o.tableSessionId ? String(o.tableSessionId) : null,
+    orderType:    o.type ?? "dine_in",
+    items:        (o.items ?? []).map((i) => ({ ...i, title: i.name })),
+    status:       o.status,
+    instructions: o.specialInstructions ?? "",
+    createdAt:    o.createdAt ?? null,
+    batches:      null,
   };
 }
 
 /* ── helpers ── */
-function estTime(order) {
-  return order.estimatedMinutes ?? (order.items.length > 2 ? 20 : 12);
+// Minutes since the ticket was fired — the API carries no prep estimate.
+function waitingMinutes(order) {
+  if (!order.createdAt) return 0;
+  return Math.max(0, Math.round((Date.now() - new Date(order.createdAt).getTime()) / 60000));
 }
 
 function orderLabel(order) {
-  const type = (order.orderType ?? "").toLowerCase();
-  if (!order.table || order.table === "—") {
-    if (type.includes("takeaway")) return "Takeaway";
-    return "Online Order";
+  if (order.orderType === "delivery") return "Delivery";
+  if (order.sessionId) {
+    const short = order.sessionId.slice(-4).toUpperCase();
+    return order.batchNumber ? `Session ${short} · Batch ${order.batchNumber}` : `Session ${short}`;
   }
-  return `Table ${String(order.table).padStart(2, "0")}`;
+  return "Dine-in";
 }
 
 function isTakeaway(order) {
-  const t = (order.orderType ?? "").toLowerCase();
-  return t.includes("takeaway") || t.includes("delivery");
+  return (order.orderType ?? "") === "delivery";
 }
 
 function statusOf(order) {
-  return order.status ?? "pending";
+  return order.status ?? "placed";
 }
 
 /* ── Upcoming card ── */
-function UpcomingCard({ order, onStart }) {
-  const mins = estTime(order);
+function UpcomingCard({ order, onAdvance }) {
+  const mins = waitingMinutes(order);
   const take = isTakeaway(order);
+  // placed -> confirmed (accept), confirmed -> preparing (start)
+  const next  = order.status === "placed" ? "confirmed" : "preparing";
+  const label = order.status === "placed" ? "Accept Order" : "Start Preparing";
   return (
     <div className="flex flex-col rounded-2xl border border-brand-cream/70 bg-white p-4 shadow-sm">
       <div className="mb-2 flex items-center justify-between">
@@ -63,7 +67,7 @@ function UpcomingCard({ order, onStart }) {
           #{order.number}
         </span>
         <span className={cn("text-[11px] font-bold", mins <= 15 ? "text-brand-orange" : "text-brand-maroon")}>
-          {mins} min est.
+          waiting {mins}m
         </span>
       </div>
       <p className={cn("mb-3 text-base font-bold", take ? "text-brand-orange" : "text-[#24190f]")}>
@@ -78,10 +82,10 @@ function UpcomingCard({ order, onStart }) {
       </div>
       <button
         type="button"
-        onClick={() => onStart(order.id)}
+        onClick={() => onAdvance(order, next)}
         className="w-full rounded-xl bg-brand-gradient py-2.5 text-sm font-bold text-white transition hover:brightness-105 active:scale-[0.98]"
       >
-        Start Preparing
+        {label}
       </button>
     </div>
   );
@@ -106,14 +110,12 @@ function OrderDetailsDrawer({ order, onClose, onMarkReady }) {
   const batches = order.batches ?? toBatches(order.items);
   const status = statusOf(order);
   const take = isTakeaway(order);
-  const tableLabel = (!order.table || order.table === "—")
-    ? (take ? "Takeaway" : "Online Order")
-    : `Table T-${order.table}`;
-  const modeLabel = take ? "Takeaway" : "Dine-In";
+  const tableLabel = orderLabel(order);
+  const modeLabel = take ? "Delivery" : "Dine-In";
 
   async function handleMarkReady() {
     setBusy(true);
-    await onMarkReady(order.id, "ready");
+    await onMarkReady(order, "ready");
     setBusy(false);
     onClose();
   }
@@ -230,17 +232,17 @@ function BoardCard({ order, column, onAction, onViewDetails }) {
 
   async function act(nextStatus) {
     setBusy(true);
-    await onAction(order.id, nextStatus);
+    await onAction(order, nextStatus);
     setBusy(false);
   }
 
   return (
     <div className={cn(
       "rounded-2xl border bg-white p-4 shadow-sm transition",
-      column === "ready"    && "border-emerald-200",
+      column === "ready"     && "border-emerald-200",
+      column === "confirmed" && "border-[#cddcf0]",
       column === "preparing" && !cancelled && "border-brand-cream/70",
-      cancelled             && "border-red-100 opacity-80",
-      column === "done"     && "border-gray-200",
+      cancelled              && "border-red-100 opacity-80",
     )}>
       <div className="mb-2 flex items-center justify-between">
         <span className="rounded-full bg-brand-cream/50 px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-muted-foreground">
@@ -270,6 +272,22 @@ function BoardCard({ order, column, onAction, onViewDetails }) {
         ))}
       </div>
 
+      {column === "confirmed" && !cancelled && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => act("preparing")}
+            className="w-full rounded-xl bg-brand-gradient py-2.5 text-sm font-bold text-white transition hover:brightness-105 disabled:opacity-60"
+          >
+            {busy ? "Updating…" : "Start Preparing"}
+          </button>
+          <button type="button" onClick={() => onViewDetails(order)} className="flex w-full items-center justify-center gap-1.5 py-1 text-sm text-muted-foreground hover:text-[#24190f]">
+            <Eye className="h-3.5 w-3.5" /> View Details
+          </button>
+        </div>
+      )}
+
       {column === "preparing" && !cancelled && (
         <div className="space-y-2">
           <button
@@ -293,13 +311,19 @@ function BoardCard({ order, column, onAction, onViewDetails }) {
       )}
 
       {column === "ready" && (
-        <button type="button" onClick={() => onViewDetails(order)} className="flex w-full items-center justify-center gap-1.5 py-1 text-sm text-muted-foreground hover:text-[#24190f]">
-          <Eye className="h-3.5 w-3.5" /> View Details
-        </button>
-      )}
-
-      {column === "done" && (
-        <p className="py-1 text-center text-sm font-medium text-emerald-600">✓ Order Completed</p>
+        <div className="space-y-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => act("delivered")}
+            className="w-full rounded-xl border border-emerald-300 bg-emerald-50 py-2.5 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+          >
+            {busy ? "Updating…" : "Handed Over"}
+          </button>
+          <button type="button" onClick={() => onViewDetails(order)} className="flex w-full items-center justify-center gap-1.5 py-1 text-sm text-muted-foreground hover:text-[#24190f]">
+            <Eye className="h-3.5 w-3.5" /> View Details
+          </button>
+        </div>
       )}
     </div>
   );
@@ -322,12 +346,12 @@ function OrdersTable({ orders }) {
           <span>Table / Mode</span>
           <span>Items</span>
           <span>Status</span>
-          <span>Est.</span>
+          <span>Waiting</span>
         </div>
         {orders.map((order, idx) => {
           const take = isTakeaway(order);
           const summary = order.items.map((i) => `${i.quantity}x ${i.title}`).join(", ");
-          const duration = estTime(order);
+          const duration = waitingMinutes(order);
           return (
             <div
               key={order.id}
@@ -385,17 +409,20 @@ export default function ChefDashboard() {
   const { data: rawBoard, error: boardErr } = useKitchenBoard(restaurantId);
   const { mutate: updateStatus } = useUpdateOrderStatus(restaurantId);
 
-  // Normalize backend data → UI shape
+  // The board endpoint returns four buckets: placed, confirmed, preparing, ready.
+  // The queue holds the same placed+confirmed tickets, oldest first.
   const upcoming  = (rawQueue ?? []).map(normalizeOrder);
   const preparing = (rawBoard?.preparing ?? []).map(normalizeOrder);
   const ready     = (rawBoard?.ready ?? []).map(normalizeOrder);
-  const done      = (rawBoard?.completed ?? []).map(normalizeOrder);
+  const accepted  = (rawBoard?.confirmed ?? []).map(normalizeOrder);
   const ongoing   = [...preparing, ...ready];
 
   const error = (queueErr ?? boardErr)?.message ?? "";
 
-  function setStatus(orderId, newStatus) {
-    updateStatus({ orderId, newStatus });
+  // Status writes use optimistic concurrency control — the server needs the
+  // status we currently see so it can reject a stale write (409).
+  function advance(order, newStatus) {
+    updateStatus({ orderId: order.id, currentStatus: order.status, newStatus });
   }
 
   return (
@@ -414,7 +441,7 @@ export default function ChefDashboard() {
           </Avatar>
           <div className="hidden flex-col leading-tight sm:flex">
             <span className="text-sm font-semibold">{staff?.name ?? "Chef"}</span>
-            <span className="text-xs text-muted-foreground">Chef · {staff?.staffCode ?? ""}</span>
+            <span className="text-xs capitalize text-muted-foreground">{staff?.role ?? "chef"}</span>
           </div>
           <button
             type="button"
@@ -435,9 +462,9 @@ export default function ChefDashboard() {
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {[
             { label: "Upcoming",  value: upcoming.length,  color: "text-brand-orange" },
+            { label: "Accepted",  value: accepted.length,  color: "text-[#1565C0]" },
             { label: "Preparing", value: preparing.length, color: "text-[#D9480F]" },
             { label: "Ready",     value: ready.length,     color: "text-emerald-600" },
-            { label: "Completed", value: done.length,      color: "text-[#1565C0]" },
           ].map((s) => (
             <div key={s.label} className="rounded-2xl border border-brand-cream/70 bg-white px-5 py-4 shadow-sm">
               <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -465,7 +492,7 @@ export default function ChefDashboard() {
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {upcoming.map((order) => (
-                <UpcomingCard key={order.id} order={order} onStart={(id) => setStatus(id, "preparing")} />
+                <UpcomingCard key={order.id} order={order} onAdvance={advance} />
               ))}
             </div>
           )}
@@ -475,9 +502,18 @@ export default function ChefDashboard() {
         <section>
           <h2 className="mb-4 text-xl font-bold">Preparation Board</h2>
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <BoardColumn label="Accepted" count={accepted.length} accent="text-[#1565C0]" bg="bg-[#EEF4FB]">
+              {accepted.map((o) => (
+                <BoardCard key={o.id} order={o} column="confirmed" onAction={advance} onViewDetails={setViewOrder} />
+              ))}
+              {accepted.length === 0 && (
+                <p className="py-6 text-center text-sm text-muted-foreground">Nothing accepted yet.</p>
+              )}
+            </BoardColumn>
+
             <BoardColumn label="Preparing" count={preparing.length} accent="text-brand-orange" bg="bg-[#FFF5EE]">
               {preparing.map((o) => (
-                <BoardCard key={o.id} order={o} column="preparing" onAction={setStatus} onViewDetails={setViewOrder} />
+                <BoardCard key={o.id} order={o} column="preparing" onAction={advance} onViewDetails={setViewOrder} />
               ))}
               {preparing.length === 0 && (
                 <p className="py-6 text-center text-sm text-muted-foreground">Nothing in preparation.</p>
@@ -486,19 +522,10 @@ export default function ChefDashboard() {
 
             <BoardColumn label="Ready" count={ready.length} accent="text-emerald-600" bg="bg-[#EDFAF0]">
               {ready.map((o) => (
-                <BoardCard key={o.id} order={o} column="ready" onAction={setStatus} onViewDetails={setViewOrder} />
+                <BoardCard key={o.id} order={o} column="ready" onAction={advance} onViewDetails={setViewOrder} />
               ))}
               {ready.length === 0 && (
                 <p className="py-6 text-center text-sm text-muted-foreground">No orders ready.</p>
-              )}
-            </BoardColumn>
-
-            <BoardColumn label="Done" count={done.length} accent="text-muted-foreground" bg="bg-[#F5F5F5]">
-              {done.map((o) => (
-                <BoardCard key={o.id} order={o} column="done" onAction={setStatus} onViewDetails={setViewOrder} />
-              ))}
-              {done.length === 0 && (
-                <p className="py-6 text-center text-sm text-muted-foreground">No completed orders.</p>
               )}
             </BoardColumn>
           </div>
@@ -510,18 +537,14 @@ export default function ChefDashboard() {
           <OrdersTable orders={ongoing} />
         </section>
 
-        {/* Recent History */}
-        <section>
-          <h2 className="mb-4 text-xl font-bold">Recent History</h2>
-          <OrdersTable orders={done} />
-        </section>
+
       </div>
 
       {viewOrder && (
         <OrderDetailsDrawer
           order={viewOrder}
           onClose={() => setViewOrder(null)}
-          onMarkReady={setStatus}
+          onMarkReady={advance}
         />
       )}
     </div>

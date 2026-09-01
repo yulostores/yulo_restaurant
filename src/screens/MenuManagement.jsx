@@ -2,7 +2,7 @@
 // the shared DashboardLayout). Built with shadcn form primitives + Tailwind.
 // Data from the mock layer: GET /restaurant_owner/menu-management.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ImagePlus,
   Pencil,
@@ -13,7 +13,14 @@ import {
 } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
-import { useMenuItems, useCategories, useCreateCategory, useCreateMenuItem, useUpdateMenuItem } from "@/hooks/owner/useMenuItems";
+import {
+  useCategories,
+  useCreateCategory,
+  useCreateMenuItem,
+  useMenuItems,
+  useToggleMenuItem,
+  useUpdateMenuItem,
+} from "@/hooks/owner/useMenuItems";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -86,6 +93,14 @@ function VegDot({ type }) {
 
 const PREP_TIME_OPTIONS = [5, 10, 15, 20, 30, 45, 60];
 
+const DESCRIPTION_MAX = 300;
+
+const EMPTY_ITEM = {
+  name: "", description: "", prepTime: 20,
+  sellingPrice: "", discountedPrice: "",
+  categoryId: "", foodType: "veg",
+};
+
 // foodType display label → backend value
 const FOOD_TYPE_OPTIONS = [
   { label: "VEG",     value: "veg" },
@@ -94,26 +109,61 @@ const FOOD_TYPE_OPTIONS = [
 ];
 
 export default function MenuManagement() {
-  const { restaurantId } = useOwnerAuth();
+  const { restaurantId, approvalStatus, isApproved } = useOwnerAuth();
 
   const { data: currentItems = [], isLoading } = useMenuItems(restaurantId);
   const { data: categoryList = [] }            = useCategories(restaurantId);
   const createMutation         = useCreateMenuItem(restaurantId);
   const updateMutation         = useUpdateMenuItem(restaurantId);
   const createCategoryMutation = useCreateCategory(restaurantId);
+  const toggleMutation         = useToggleMenuItem(restaurantId);
 
-  const [item, setItem] = useState({
-    name: "", description: "", prepTime: 20,
-    sellingPrice: "", categoryId: "", categoryName: "", foodType: "veg",
-  });
+  const [item, setItem] = useState(EMPTY_ITEM);
+  const [ingredients, setIngredients]   = useState([]);
+  const [newIngredient, setNewIngredient] = useState("");
   const [imageFile, setImageFile]       = useState(null);
   const [statusMsg, setStatusMsg]       = useState("");
   const [newCatName, setNewCatName]     = useState("");
   const [showNewCat, setShowNewCat]     = useState(false);
+  const [listSearch, setListSearch]     = useState("");
+  const [listCategory, setListCategory] = useState("all");
+  const [listStatus, setListStatus]     = useState("all");
 
-  const ingredients = [];
-  const addons = [];
+  const categoryNameById = useMemo(
+    () => Object.fromEntries(categoryList.map((c) => [c._id, c.name])),
+    [categoryList],
+  );
 
+  const visibleItems = useMemo(() => {
+    const term = listSearch.trim().toLowerCase();
+    return currentItems.filter((mi) => {
+      if (listCategory !== "all" && mi.categoryId !== listCategory) return false;
+      if (listStatus === "available" && !mi.isAvailable) return false;
+      if (listStatus === "unavailable" && mi.isAvailable) return false;
+      return !term || (mi.name ?? "").toLowerCase().includes(term);
+    });
+  }, [currentItems, listSearch, listCategory, listStatus]);
+
+  function addIngredient() {
+    const value = newIngredient.trim();
+    if (!value) return;
+    setIngredients((list) => (list.includes(value) ? list : [...list, value]));
+    setNewIngredient("");
+  }
+
+  function removeIngredient(value) {
+    setIngredients((list) => list.filter((i) => i !== value));
+  }
+
+  function resetForm() {
+    setItem(EMPTY_ITEM);
+    setIngredients([]);
+    setNewIngredient("");
+    setImageFile(null);
+  }
+
+  // POST/PATCH /menu-items are multipart/form-data. `ingredients` goes over the
+  // wire as a JSON array string, per the documented field list.
   async function handleSubmit() {
     setStatusMsg("");
     if (!item.name || !item.categoryId || !item.sellingPrice) {
@@ -123,20 +173,38 @@ export default function MenuManagement() {
     const formData = new FormData();
     formData.append("name", item.name);
     formData.append("description", item.description ?? "");
-    formData.append("sellingPrice", item.sellingPrice);
+    formData.append("sellingPrice", String(item.sellingPrice));
+    if (item.discountedPrice) formData.append("discountedPrice", String(item.discountedPrice));
     formData.append("categoryId", item.categoryId);
     formData.append("foodType", item.foodType);
-    formData.append("prepTime", item.prepTime);
+    formData.append("prepTime", String(item.prepTime));
+    formData.append("ingredients", JSON.stringify(ingredients));
     if (imageFile) formData.append("image", imageFile);
     try {
       if (item._id) await updateMutation.mutateAsync({ itemId: item._id, formData });
       else          await createMutation.mutateAsync(formData);
       setStatusMsg(item._id ? "Item updated!" : "Item created!");
-      setItem({ name: "", description: "", prepTime: 20, sellingPrice: "", categoryId: "", categoryName: "", foodType: "veg" });
-      setImageFile(null);
+      resetForm();
     } catch (err) {
-      setStatusMsg(err.response?.data?.message ?? err.message);
+      setStatusMsg(err.message);
     }
+  }
+
+  // Load an existing item back into the form for editing.
+  function editItem(existing) {
+    setItem({
+      _id:             existing._id,
+      name:            existing.name ?? "",
+      description:     existing.description ?? "",
+      prepTime:        existing.prepTime ?? 20,
+      sellingPrice:    existing.sellingPrice ?? "",
+      discountedPrice: existing.discountedPrice ?? "",
+      categoryId:      existing.categoryId ?? "",
+      foodType:        existing.foodType ?? "veg",
+    });
+    setIngredients(existing.ingredients ?? []);
+    setImageFile(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   if (isLoading) {
@@ -155,6 +223,13 @@ export default function MenuManagement() {
           Create, update and manage restaurant menu items.
         </p>
       </div>
+
+      {approvalStatus && !isApproved ? (
+        <div className="rounded-2xl border border-brand-cream bg-[#FFF3E0] px-4 py-3 text-sm text-[#8a4b16]">
+          <strong className="capitalize">{approvalStatus}</strong> — categories and menu
+          items unlock once a platform admin approves this restaurant.
+        </div>
+      ) : null}
 
       {/* Item Information */}
       <Card>
@@ -181,10 +256,10 @@ export default function MenuManagement() {
             <div className="flex items-center justify-between">
               <Label>Description</Label>
               <span className="text-xs text-muted-foreground">
-                {(item.description ?? "").length}/{item.descriptionMax}
+                {(item.description ?? "").length}/{DESCRIPTION_MAX}
               </span>
             </div>
-            <Textarea value={item.description} maxLength={item.descriptionMax} onChange={(e) => setItem((i) => ({ ...i, description: e.target.value }))} />
+            <Textarea value={item.description} maxLength={DESCRIPTION_MAX} onChange={(e) => setItem((i) => ({ ...i, description: e.target.value }))} />
           </div>
 
           <div className="space-y-1.5">
@@ -273,194 +348,81 @@ export default function MenuManagement() {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Selling Price</Label>
-              <RupeeInput value={item.sellingPrice} onChange={(e) => setItem((i) => ({ ...i, sellingPrice: e.target.value }))} />
+              <Label>Selling Price (MRP)</Label>
+              <RupeeInput
+                value={item.sellingPrice}
+                onChange={(e) => setItem((i) => ({ ...i, sellingPrice: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Discounted Price</Label>
+              <RupeeInput
+                value={item.discountedPrice}
+                onChange={(e) => setItem((i) => ({ ...i, discountedPrice: e.target.value }))}
+                placeholder="Optional"
+              />
+              <p className="text-xs text-muted-foreground">
+                When set, guests are charged this instead of the MRP.
+              </p>
             </div>
           </div>
+
         </CardContent>
       </Card>
 
-      {/* Ingredients & Food Cost */}
+      {/* Ingredients — the API stores a simple string list per item. */}
       <Card>
         <CardHeader className="pb-4">
-          <h2 className="text-base font-bold">Ingredients &amp; Food Cost</h2>
+          <h2 className="text-base font-bold">Ingredients</h2>
+          <p className="text-xs text-muted-foreground">
+            Shown to guests on the item page. Saved with the item.
+          </p>
         </CardHeader>
-        <CardContent className="space-y-5">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-brand-cream/60">
-                <TableHead>Ingredient</TableHead>
-                <TableHead>Quantity</TableHead>
-                <TableHead>Unit</TableHead>
-                <TableHead>Cost</TableHead>
-                <TableHead className="w-10" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+        <CardContent className="space-y-4">
+          {ingredients.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No ingredients listed yet.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
               {ingredients.map((ing) => (
-                <TableRow key={ing.id}>
-                  <TableCell className="font-medium">{ing.name}</TableCell>
-                  <TableCell>{ing.quantity}</TableCell>
-                  <TableCell className="text-muted-foreground">{ing.unit}</TableCell>
-                  <TableCell className="font-semibold">₹{ing.cost}</TableCell>
-                  <TableCell>
-                    <button type="button" className="text-muted-foreground hover:text-brand-maroon">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </TableCell>
-                </TableRow>
+                <span
+                  key={ing}
+                  className="flex items-center gap-1.5 rounded-full bg-brand-cream/40 px-3 py-1.5 text-sm capitalize text-[#5a403e]"
+                >
+                  {ing}
+                  <button
+                    type="button"
+                    onClick={() => removeIngredient(ing)}
+                    className="text-muted-foreground hover:text-brand-maroon"
+                    aria-label={`Remove ${ing}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </span>
               ))}
-            </TableBody>
-          </Table>
-
-          <div className="rounded-xl border border-brand-cream/70 bg-[#FCFAF7] p-4">
-            <p className="text-sm font-semibold">Add New Ingredient</p>
-            <p className="mb-3 text-xs text-muted-foreground">
-              Add a new raw material to calculate food cost
-            </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Ingredient Name</Label>
-                <Input placeholder="e.g. Basmati Rice" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Quantity</Label>
-                <Input defaultValue="0" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Unit</Label>
-                <Select defaultValue="gm">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gm">gm</SelectItem>
-                    <SelectItem value="kg">kg</SelectItem>
-                    <SelectItem value="ml">ml</SelectItem>
-                    <SelectItem value="pcs">pcs</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Cost</Label>
-                <RupeeInput defaultValue="0" />
-              </div>
             </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline">Cancel</Button>
-              <Button className="bg-brand-orange text-white hover:bg-brand-orange/90">
-                Add Ingredient
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          )}
 
-      {/* Add-ons & Extras */}
-      <Card>
-        <CardHeader className="pb-4">
-          <h2 className="text-base font-bold">Add-ons &amp; Extras</h2>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {addons.map((addon) => (
-            <div
-              key={addon.id}
-              className="flex items-center gap-4 rounded-xl border border-brand-cream/70 px-4 py-3"
+          <div className="flex gap-2">
+            <Input
+              value={newIngredient}
+              onChange={(e) => setNewIngredient(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); addIngredient(); }
+              }}
+              placeholder="e.g. Basmati Rice"
+              className="max-w-xs"
+            />
+            <Button
+              type="button"
+              onClick={addIngredient}
+              className="bg-brand-orange text-white hover:bg-brand-orange/90"
             >
-              <Switch defaultChecked={addon.enabled} />
-              <div>
-                <p className="text-sm font-semibold">{addon.name}</p>
-                <p className="text-xs text-muted-foreground">{addon.note}</p>
-              </div>
-              <span className="ml-auto text-sm font-semibold text-brand-green">
-                +₹{addon.price}
-              </span>
-              <button type="button" className="text-muted-foreground hover:text-brand-orange">
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button type="button" className="text-muted-foreground hover:text-brand-maroon">
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
-
-          <div className="rounded-xl border border-brand-cream/70 bg-[#FCFAF7] p-4">
-            <p className="text-sm font-semibold">Add New Add-on</p>
-            <p className="mb-3 text-xs text-muted-foreground">
-              Create an optional item customers can add to their order
-            </p>
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Name</Label>
-                  <Input placeholder="Enter add-on name" />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Food Type</Label>
-                    <Select defaultValue="Veg">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Veg">Veg</SelectItem>
-                        <SelectItem value="Non-Veg">Non-Veg</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Quantity</Label>
-                    <Input defaultValue="1" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Unit</Label>
-                    <Select defaultValue="Piece">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Piece">Piece</SelectItem>
-                        <SelectItem value="Serving">Serving</SelectItem>
-                        <SelectItem value="Bowl">Bowl</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Pricing</Label>
-                    <RupeeInput defaultValue="50" />
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <label className="flex h-[104px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-[#E2DFDE] bg-white text-center">
-                  <Upload className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">Upload Item Image</span>
-                  <span className="text-xs text-muted-foreground">PNG, JPG up to 2MB</span>
-                </label>
-                <div className="flex items-center gap-3 rounded-xl border border-brand-cream/70 bg-white p-3">
-                  <span className="h-10 w-10 shrink-0 rounded-lg bg-gradient-to-br from-brand-saffron to-brand-red" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">Item Name</p>
-                    <p className="text-xs text-muted-foreground">
-                      <span className="font-semibold text-brand-green">VEG</span> · 1 Serving
-                    </p>
-                  </div>
-                  <span className="ml-auto text-sm font-bold text-brand-red">₹50</span>
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline">Cancel</Button>
-              <Button className="bg-brand-orange text-white hover:bg-brand-orange/90">
-                Save Add-on
-              </Button>
-            </div>
+              Add
+            </Button>
           </div>
         </CardContent>
       </Card>
+
 
       {/* Footer actions */}
       <div className="flex items-center justify-end gap-3">
@@ -469,11 +431,13 @@ export default function MenuManagement() {
             {statusMsg}
           </span>
         )}
-        <Button variant="outline" className="px-6" onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
-          Save Draft
+        <Button variant="outline" className="px-6" onClick={resetForm} disabled={createMutation.isPending || updateMutation.isPending}>
+          Clear
         </Button>
         <Button className="bg-brand-gradient px-6 text-white hover:brightness-105" onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
-          {createMutation.isPending || updateMutation.isPending ? "Saving…" : "Publish Item"}
+          {createMutation.isPending || updateMutation.isPending
+            ? "Saving…"
+            : item._id ? "Update Item" : "Create Item"}
         </Button>
       </div>
 
@@ -483,26 +447,30 @@ export default function MenuManagement() {
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Search dishes..." className="w-56 pl-9" />
+            <Input
+              value={listSearch}
+              onChange={(e) => setListSearch(e.target.value)}
+              placeholder="Search dishes..."
+              className="w-56 pl-9"
+            />
           </div>
-          <Select defaultValue="all-categories">
+          <Select value={listCategory} onValueChange={setListCategory}>
             <SelectTrigger className="w-[150px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all-categories">All Categories</SelectItem>
-              <SelectItem value="main">Main Course</SelectItem>
-              <SelectItem value="starter">Starter</SelectItem>
-              <SelectItem value="dessert">Dessert</SelectItem>
-              <SelectItem value="beverage">Beverage</SelectItem>
+              <SelectItem value="all">All Categories</SelectItem>
+              {categoryList.map((c) => (
+                <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
-          <Select defaultValue="all-status">
+          <Select value={listStatus} onValueChange={setListStatus}>
             <SelectTrigger className="w-[130px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all-status">All Status</SelectItem>
+              <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="available">Available</SelectItem>
               <SelectItem value="unavailable">Unavailable</SelectItem>
             </SelectContent>
@@ -511,7 +479,7 @@ export default function MenuManagement() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {currentItems.map((mi) => (
+        {visibleItems.map((mi) => (
           <Card key={mi._id} className="overflow-hidden">
             <div className="relative h-36">
               {mi.image ? (
@@ -531,20 +499,36 @@ export default function MenuManagement() {
               )}
             </div>
             <CardContent className="space-y-3 p-4">
-              <div>
-                <h3 className="font-bold leading-tight">{mi.name}</h3>
-                <p className="text-xs text-muted-foreground">{mi.categoryId?.name ?? ""}</p>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="truncate font-bold leading-tight">{mi.name}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {categoryNameById[mi.categoryId] ?? "Uncategorised"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => editItem(mi)}
+                  className="shrink-0 text-muted-foreground hover:text-brand-orange"
+                  aria-label={`Edit ${mi.name}`}
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex flex-col">
-                  <span className="font-bold text-brand-red">₹{mi.discountedPrice ?? mi.sellingPrice}</span>
+                  <span className="font-bold text-brand-red">₹{mi.effectivePrice ?? mi.discountedPrice ?? mi.sellingPrice}</span>
                   <span className="text-xs text-muted-foreground">{mi.prepTime ? `${mi.prepTime} min` : ""}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={cn("text-[11px] font-bold", mi.isAvailable ? "text-brand-green" : "text-muted-foreground")}>
                     {mi.isAvailable ? "AVAILABLE" : "UNAVAILABLE"}
                   </span>
-                  <Switch defaultChecked={mi.isAvailable} />
+                  <Switch
+                    checked={!!mi.isAvailable}
+                    disabled={toggleMutation.isPending}
+                    onCheckedChange={() => toggleMutation.mutate(mi._id)}
+                  />
                 </div>
               </div>
             </CardContent>

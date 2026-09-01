@@ -1,231 +1,234 @@
-// Manager · Table Management (/manager/tables) — PRD §16.1. Floor view with live
-// status, table-wise active orders, add/edit, status changes, waiter assignment,
-// and activate/deactivate (TBL-01/02/03/05/06).
+// Manager · Table Operations (/manager/tables) — GET/POST/PATCH/DELETE
+// /api/owner/:rId/tables. Runs on the owner session (no manager role exists).
+//
+// Note: the tables API models `identifier`, `capacity`, `isActive` and the QR
+// state. Floor status (available/occupied/cleaning) and waiter assignment are
+// NOT part of the documented schema — see API-GAPS.md.
 
-import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Users } from "lucide-react";
+import { useState } from "react";
+import { Plus, QrCode, Trash2 } from "lucide-react";
 
-import { requestJson } from "@/api";
 import DashboardLayout from "@/components/DashboardLayout";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useOwnerAuth } from "@/context/OwnerAuthContext";
+import {
+  useCreateTable,
+  useDeleteTable,
+  useGenerateQR,
+  useTables,
+  useUpdateTable,
+} from "@/hooks/owner/useTables";
 
-const MANAGER_PROFILE = { restaurantName: "Saffron Kitchen", userName: "Alex Mercy", role: "Manager" };
-
-const STATUSES = ["available", "occupied", "preparing", "served", "cleaning", "inactive"];
-
-const STATUS_TONE = {
-  available: "bg-[#E8F5EC] text-[#2E7D32] border-[#BFE3C8]",
-  occupied: "bg-[#E7F0FB] text-[#1565C0] border-[#C7DBF3]",
-  preparing: "bg-[#FFF3E0] text-[#D9480F] border-[#FAD9BE]",
-  served: "bg-[#EDE7F6] text-[#5E35B1] border-[#D6C9EE]",
-  cleaning: "bg-[#FFF8E1] text-[#A06D00] border-[#F1E0A8]",
-  inactive: "bg-[#F3F4F6] text-[#5F5F5F] border-[#E2E2E2]",
-};
-
-function formatPrice(value) {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
-}
-
-const WAITERS = ["Unassigned", "Sunil Verma", "Anita Desai", "Ravi Kumar"];
+const EMPTY = { identifier: "", capacity: "" };
 
 export default function ManagerTables() {
-  const [tables, setTables] = useState(null);
-  const [error, setError] = useState("");
-  const [form, setForm] = useState({ number: "", seats: "4" });
+  const { restaurantId } = useOwnerAuth();
 
-  function load() {
-    requestJson("/manager/tables")
-      .then((payload) => setTables(payload.data.tables))
-      .catch((err) => setError(err.message));
-  }
+  const { data: tables = [], isLoading, isError, error } = useTables(restaurantId);
+  const createTable = useCreateTable(restaurantId);
+  const updateTable = useUpdateTable(restaurantId);
+  const deleteTable = useDeleteTable(restaurantId);
+  const generateQR  = useGenerateQR(restaurantId);
 
-  useEffect(() => {
-    load();
-    const id = window.setInterval(load, 6000);
-    return () => window.clearInterval(id);
-  }, []);
+  const [form, setForm] = useState(EMPTY);
+  const [showForm, setShowForm] = useState(false);
+  const [actionError, setActionError] = useState("");
 
-  async function patch(id, body) {
-    try {
-      await requestJson(`/manager/tables/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function addTable(event) {
+  async function add(event) {
     event.preventDefault();
-    if (!form.number.trim()) return;
+    setActionError("");
     try {
-      await requestJson("/manager/tables", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+      await createTable.mutateAsync({
+        identifier: form.identifier.trim(),
+        capacity: Number(form.capacity) || undefined,
       });
-      setForm({ number: "", seats: "4" });
-      load();
+      setForm(EMPTY);
+      setShowForm(false);
     } catch (err) {
-      setError(err.message);
+      setActionError(err.message);
     }
   }
 
-  async function remove(id) {
-    setTables((cur) => cur.filter((t) => t.id !== id));
+  async function toggleActive(table) {
+    setActionError("");
     try {
-      await requestJson(`/manager/tables/${id}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+      await updateTable.mutateAsync({
+        tableId: table._id,
+        body: { isActive: !table.isActive },
       });
     } catch (err) {
-      setError(err.message);
-      load();
+      setActionError(err.message);
     }
   }
 
-  const summary = useMemo(() => {
-    const list = tables ?? [];
-    return STATUSES.map((s) => ({ status: s, count: list.filter((t) => t.status === s).length }));
-  }, [tables]);
+  async function remove(table) {
+    if (!window.confirm(`Delete table ${table.identifier}?`)) return;
+    setActionError("");
+    try {
+      await deleteTable.mutateAsync(table._id);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  }
+
+  async function makeQR(table) {
+    setActionError("");
+    try {
+      await generateQR.mutateAsync(table._id);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  }
+
+  if (!restaurantId) {
+    return (
+      <DashboardLayout>
+        <p className="text-muted-foreground">No restaurant is linked to this account yet.</p>
+      </DashboardLayout>
+    );
+  }
 
   return (
-    <DashboardLayout profile={MANAGER_PROFILE}>
-      <div className="flex items-start justify-between">
+    <DashboardLayout>
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Table Management</h1>
+          <h1 className="text-2xl font-bold">Table Operations</h1>
           <p className="text-sm text-muted-foreground">
-            Monitor floor status, active orders, and table availability in real time.
+            Manage the floor plan, table capacity, and QR codes.
           </p>
         </div>
+        <Button
+          onClick={() => setShowForm((v) => !v)}
+          className="gap-2 bg-brand-gradient text-white hover:brightness-105"
+        >
+          <Plus className="h-4 w-4" /> Add Table
+        </Button>
       </div>
 
-      {error ? <p className="text-sm text-brand-maroon">{error}</p> : null}
+      {isError ? <p className="text-sm text-brand-maroon">Failed to load: {error.message}</p> : null}
+      {actionError ? <p className="text-sm text-brand-maroon">{actionError}</p> : null}
 
-      {/* Occupancy summary */}
-      <section className="grid grid-cols-3 gap-3 lg:grid-cols-6">
-        {summary.map((s) => (
-          <Card key={s.status}>
-            <CardContent className="p-4">
-              <span className={cn("inline-block rounded-full border px-2 py-0.5 text-[11px] font-bold capitalize", STATUS_TONE[s.status])}>
-                {s.status}
-              </span>
-              <strong className="mt-2 block text-2xl font-bold leading-none">{s.count}</strong>
-            </CardContent>
-          </Card>
-        ))}
-      </section>
+      {showForm ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <h2 className="text-base font-bold">Add Table</h2>
+          </CardHeader>
+          <CardContent>
+            <form className="flex flex-wrap items-end gap-4" onSubmit={add}>
+              <div className="space-y-1.5">
+                <Label>Identifier</Label>
+                <Input
+                  value={form.identifier}
+                  onChange={(e) => setForm((f) => ({ ...f, identifier: e.target.value }))}
+                  placeholder="T1"
+                  className="w-32"
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Capacity</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={form.capacity}
+                  onChange={(e) => setForm((f) => ({ ...f, capacity: e.target.value }))}
+                  placeholder="4"
+                  className="w-28"
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={createTable.isPending}
+                className="bg-brand-orange text-white hover:bg-brand-orange/90"
+              >
+                {createTable.isPending ? "Creating…" : "Create"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
 
-      {/* Add table */}
       <Card>
-        <CardContent className="p-4">
-          <form className="flex flex-wrap items-end gap-3" onSubmit={addTable}>
-            <div className="space-y-1.5">
-              <Label>Table Number</Label>
-              <Input value={form.number} onChange={(e) => setForm((f) => ({ ...f, number: e.target.value }))} placeholder="16" className="w-32" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Seats</Label>
-              <Input type="number" min="1" value={form.seats} onChange={(e) => setForm((f) => ({ ...f, seats: e.target.value }))} className="w-24" />
-            </div>
-            <Button type="submit" className="gap-2 bg-brand-gradient text-white hover:brightness-105">
-              <Plus className="h-4 w-4" /> Add Table
-            </Button>
-          </form>
+        <CardHeader className="pb-4">
+          <h2 className="text-base font-bold">{tables.length} tables</h2>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-brand-cream/60">
+                  <TableHead className="pl-6">Table</TableHead>
+                  <TableHead>Capacity</TableHead>
+                  <TableHead>QR</TableHead>
+                  <TableHead>Active</TableHead>
+                  <TableHead className="pr-6 text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tables.map((t) => (
+                  <TableRow key={t._id}>
+                    <TableCell className="pl-6 font-semibold">{t.identifier}</TableCell>
+                    <TableCell className="text-muted-foreground">{t.capacity ?? "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant={t.qrCode?.status === "active" ? "ok" : "muted"}>
+                        {t.qrCode?.status ?? "none"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Switch
+                        checked={!!t.isActive}
+                        disabled={updateTable.isPending}
+                        onCheckedChange={() => toggleActive(t)}
+                      />
+                    </TableCell>
+                    <TableCell className="pr-6 text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5"
+                          disabled={generateQR.isPending}
+                          onClick={() => makeQR(t)}
+                        >
+                          <QrCode className="h-3.5 w-3.5" /> QR
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={deleteTable.isPending}
+                          onClick={() => remove(t)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {tables.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                      {isLoading ? "Loading…" : "No tables yet. Add one to get started."}
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
-
-      {/* Floor grid */}
-      {!tables ? (
-        <p className="text-sm text-muted-foreground">Loading tables…</p>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {tables.map((t) => (
-            <Card key={t.id} className={cn(!t.active && "opacity-70")}>
-              <CardContent className="space-y-3 p-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-lg font-bold">{t.number}</p>
-                    <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Users className="h-3.5 w-3.5" /> {t.seats} seats
-                    </p>
-                  </div>
-                  <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-bold capitalize", STATUS_TONE[t.status])}>
-                    {t.status}
-                  </span>
-                </div>
-
-                {t.activeOrder ? (
-                  <div className="rounded-lg bg-[#FCFAF7] px-3 py-2 text-xs">
-                    <span className="font-semibold">#{t.activeOrder.id.slice(-4)}</span> ·{" "}
-                    {t.activeOrder.items} items · {formatPrice(t.activeOrder.total)}
-                    <span className="ml-1 capitalize text-muted-foreground">({t.activeOrder.status})</span>
-                  </div>
-                ) : (
-                  <div className="rounded-lg bg-[#FCFAF7] px-3 py-2 text-xs text-muted-foreground">No active order</div>
-                )}
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-[11px]">Status</Label>
-                    <Select value={t.status} onValueChange={(v) => patch(t.id, { status: v })} disabled={!t.active}>
-                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {STATUSES.filter((s) => s !== "inactive").map((s) => (
-                          <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-[11px]">Waiter</Label>
-                    <Select
-                      value={t.waiter || "Unassigned"}
-                      onValueChange={(v) => patch(t.id, { waiter: v === "Unassigned" ? "" : v })}
-                      disabled={!t.active}
-                    >
-                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {WAITERS.map((w) => (
-                          <SelectItem key={w} value={w}>{w}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between border-t border-brand-cream/60 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => patch(t.id, { active: !t.active })}
-                    className={cn("text-xs font-semibold", t.active ? "text-brand-maroon" : "text-brand-green")}
-                  >
-                    {t.active ? "Deactivate" : "Activate"}
-                  </button>
-                  <button type="button" onClick={() => remove(t.id)} className="text-muted-foreground hover:text-brand-maroon" aria-label="Delete table">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
     </DashboardLayout>
   );
 }

@@ -6,7 +6,8 @@ export const billKeys = {
   one:  (rId, id)   => ["bills", rId, "bill", id],
 };
 
-export function useBills(restaurantId, params={}) {
+// params: { status: "open" | "paid", page, limit }
+export function useBills(restaurantId, params = {}) {
   return useQuery({
     queryKey: billKeys.list(restaurantId, params),
     queryFn: () => ownerApi.listBills(restaurantId, params).then((r) => r.data.data.bills ?? []),
@@ -19,7 +20,7 @@ export function useBills(restaurantId, params={}) {
 export function useBill(restaurantId, billId) {
   return useQuery({
     queryKey: billKeys.one(restaurantId, billId),
-    queryFn: () => ownerApi.getBill(restaurantId, billId).then((r) => r.data.data),
+    queryFn: () => ownerApi.getBill(restaurantId, billId).then((r) => r.data.data.bill),
     enabled: !!restaurantId && !!billId,
     staleTime: 30_000,
   });

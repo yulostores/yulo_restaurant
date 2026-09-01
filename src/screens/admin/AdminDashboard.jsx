@@ -1,145 +1,264 @@
-// Platform Dashboard (/admin) — PRD §14.1. Platform-wide totals, system health,
-// recent restaurant onboarding, and recent platform activity.
+// Platform Dashboard (/admin) — GET /api/admin/dashboard, plus the revenue
+// overview chart and the top-stores report.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
-  Activity,
   CheckCircle2,
+  CircleSlash,
+  Clock,
+  IndianRupee,
+  LifeBuoy,
+  PauseCircle,
   Store,
-  Tag,
   Users,
   Utensils,
+  XCircle,
 } from "lucide-react";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
-import { requestJson } from "@/api";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import AdminLayout, { formatNumber } from "./AdminLayout";
+import {
+  useAdminDashboard,
+  useRevenueOverview,
+  useTopStores,
+} from "@/hooks/admin/useAdmin";
+import AdminLayout, { formatNumber, formatPrice } from "./AdminLayout";
 
-const STAT_META = [
-  { key: "totalRestaurants", label: "Total Restaurants", icon: Store },
-  { key: "activeRestaurants", label: "Active", icon: CheckCircle2 },
-  { key: "inactiveRestaurants", label: "Inactive", icon: Store },
-  { key: "totalCustomers", label: "Total Customers", icon: Users },
-  { key: "totalOrders", label: "Total Orders", icon: Utensils },
-  { key: "activeOffers", label: "Active Offers", icon: Tag },
+const STORE_STATES = [
+  { key: "pending",   label: "Pending",   icon: Clock,        tone: "text-[#D9480F]" },
+  { key: "active",    label: "Active",    icon: CheckCircle2, tone: "text-brand-green" },
+  { key: "suspended", label: "Suspended", icon: PauseCircle,  tone: "text-[#1565C0]" },
+  { key: "rejected",  label: "Rejected",  icon: XCircle,      tone: "text-brand-maroon" },
+  { key: "expired",   label: "Expired",   icon: CircleSlash,  tone: "text-muted-foreground" },
 ];
 
-function healthTone(status) {
-  if (status === "operational") return "bg-[#E8F5EC] text-brand-green";
-  if (status === "degraded") return "bg-[#FFF3E0] text-[#D9480F]";
-  return "bg-[#FCE9E4] text-brand-maroon";
-}
+const TICKET_STATES = [
+  { key: "open",        label: "Open" },
+  { key: "in_progress", label: "In progress" },
+  { key: "resolved",    label: "Resolved" },
+  { key: "closed",      label: "Closed" },
+];
 
-function timeAgo(value) {
-  const mins = Math.round((Date.now() - new Date(value).getTime()) / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
-  return `${Math.round(mins / 1440)}d ago`;
+const RANGES = ["day", "week", "month", "year"];
+
+function StatCard({ icon: Icon, label, value, tone }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <span className={cn("grid h-9 w-9 place-items-center rounded-full bg-brand-orange/10", tone ?? "text-brand-orange")}>
+          <Icon className="h-[18px] w-[18px]" />
+        </span>
+        <strong className="mt-3 block text-2xl font-bold leading-none">{value}</strong>
+        <span className="mt-1 block text-[11px] uppercase tracking-wide text-muted-foreground">
+          {label}
+        </span>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function AdminDashboard() {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState("");
+  const [range, setRange] = useState("month");
 
-  useEffect(() => {
-    requestJson("/admin/dashboard")
-      .then((payload) => setData(payload.data))
-      .catch((err) => setError(err.message));
-  }, []);
+  const { data, isLoading, isError, error } = useAdminDashboard();
+  const { data: revenue, isLoading: revenueLoading } = useRevenueOverview(range);
+  const { data: topStores = [], isLoading: topLoading } = useTopStores(5);
 
-  if (error && !data) {
+  if (isError) {
     return (
       <AdminLayout title="Platform Dashboard">
-        <p className="text-muted-foreground">Failed to load: {error}</p>
+        <p className="text-sm text-brand-maroon">Failed to load: {error.message}</p>
       </AdminLayout>
     );
   }
-  if (!data) {
+
+  if (isLoading || !data) {
     return (
       <AdminLayout title="Platform Dashboard">
-        <p className="text-muted-foreground">Loading dashboard…</p>
+        <p className="text-sm text-muted-foreground">Loading dashboard…</p>
       </AdminLayout>
     );
   }
+
+  const stores = data.stores ?? {};
+  const tickets = data.tickets ?? {};
+  const totalStores = Object.values(stores).reduce((a, b) => a + (Number(b) || 0), 0);
+  const openTickets = (Number(tickets.open) || 0) + (Number(tickets.in_progress) || 0);
+
+  const chartPoints = (revenue?.points ?? []).map((p) => ({
+    ...p,
+    label: new Date(p.date).toLocaleDateString("en-IN",
+      range === "day"  ? { hour: "2-digit" }
+      : range === "year" ? { month: "short" }
+      : { day: "numeric", month: "short" }),
+  }));
 
   return (
     <AdminLayout
       title="Platform Dashboard"
-      subtitle="Monitor restaurants, customers, and overall platform health."
+      subtitle="Stores, customers, revenue, and support load across the platform."
     >
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        {STAT_META.map((meta) => {
-          const Icon = meta.icon;
-          return (
-            <Card key={meta.key}>
-              <CardContent className="p-4">
-                <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-orange/10 text-brand-orange">
-                  <Icon className="h-[18px] w-[18px]" />
-                </span>
-                <strong className="mt-3 block text-2xl font-bold leading-none">
-                  {formatNumber(data.stats[meta.key])}
-                </strong>
-                <span className="mt-1 block text-[11px] uppercase tracking-wide text-muted-foreground">
-                  {meta.label}
-                </span>
-              </CardContent>
-            </Card>
-          );
-        })}
+      {/* Headline totals */}
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard icon={Store} label="Total Stores" value={formatNumber(totalStores)} />
+        <StatCard icon={Users} label="Customers" value={formatNumber(data.customers)} />
+        <StatCard
+          icon={IndianRupee}
+          label="Revenue (all time)"
+          value={formatPrice(data.revenue?.total)}
+          tone="text-brand-green"
+        />
+        <StatCard icon={Utensils} label="Paid Orders" value={formatNumber(data.revenue?.orders)} />
       </section>
 
-      {/* System health */}
+      {/* Store pipeline */}
       <Card>
         <CardHeader className="pb-3">
-          <h2 className="text-base font-bold">System Health</h2>
+          <h2 className="text-base font-bold">Store Pipeline</h2>
         </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {data.health.map((h) => (
-            <div key={h.name} className="flex items-center justify-between rounded-xl border border-brand-cream/70 px-4 py-3">
-              <span className="text-sm font-medium">{h.name}</span>
-              <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-bold capitalize", healthTone(h.status))}>
-                {h.status}
-              </span>
+        <CardContent className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          {STORE_STATES.map((s) => {
+            const Icon = s.icon;
+            return (
+              <div
+                key={s.key}
+                className="flex items-center justify-between rounded-xl border border-brand-cream/70 px-4 py-3"
+              >
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  <Icon className={cn("h-4 w-4", s.tone)} />
+                  {s.label}
+                </span>
+                <span className="text-lg font-bold">{formatNumber(stores[s.key])}</span>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      {/* Revenue chart */}
+      <Card>
+        <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
+          <h2 className="text-base font-bold">Revenue Overview</h2>
+          <div className="flex gap-1.5">
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRange(r)}
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs font-semibold capitalize transition",
+                  range === r
+                    ? "bg-brand-gradient text-white"
+                    : "border border-brand-cream bg-white text-[#5a403e] hover:bg-brand-cream/30",
+                )}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {revenueLoading ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Loading chart…</p>
+          ) : chartPoints.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              No revenue recorded in this window.
+            </p>
+          ) : (
+            <div className="h-[260px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartPoints} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="adminRevenue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#D9480F" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#D9480F" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F0E6DC" vertical={false} />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={12}
+                    tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)}
+                  />
+                  <Tooltip
+                    formatter={(v, name) =>
+                      name === "revenue" ? [formatPrice(v), "Revenue"] : [formatNumber(v), "Orders"]
+                    }
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="revenue"
+                    stroke="#D9480F"
+                    strokeWidth={2}
+                    fill="url(#adminRevenue)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
             </div>
-          ))}
+          )}
         </CardContent>
       </Card>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Recent restaurants */}
+        {/* Top stores */}
         <Card>
           <CardHeader className="pb-3">
-            <h2 className="text-base font-bold">Recent Restaurants</h2>
+            <h2 className="text-base font-bold">Top Stores by Revenue</h2>
           </CardHeader>
           <CardContent>
-            {data.recentRestaurants.map((r) => (
-              <div key={r.id} className="flex items-center justify-between border-b border-[#F6EFE9] py-3 last:border-0">
-                <div>
-                  <p className="font-semibold">{r.name}</p>
-                  <p className="text-xs text-muted-foreground">{r.owner} · {r.city}</p>
+            {topLoading ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
+            ) : topStores.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">No paid orders yet.</p>
+            ) : (
+              topStores.map((s) => (
+                <div
+                  key={s.restaurantId}
+                  className="flex items-center justify-between border-b border-[#F6EFE9] py-3 last:border-0"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold">{s.name ?? "Unnamed store"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatNumber(s.orders)} orders
+                      {s.avgRating ? ` · ★ ${s.avgRating}` : ""}
+                    </p>
+                  </div>
+                  <span className="shrink-0 font-bold">{formatPrice(s.revenue)}</span>
                 </div>
-                <Badge variant={r.status === "active" ? "ok" : "muted"} className="capitalize">{r.status}</Badge>
-              </div>
-            ))}
+              ))
+            )}
           </CardContent>
         </Card>
 
-        {/* Recent activity */}
+        {/* Support load */}
         <Card>
           <CardHeader className="flex-row items-center gap-2 space-y-0 pb-3">
-            <Activity className="h-4 w-4 text-brand-orange" />
-            <h2 className="text-base font-bold">Recent Platform Activity</h2>
+            <LifeBuoy className="h-4 w-4 text-brand-orange" />
+            <h2 className="text-base font-bold">Support Tickets</h2>
           </CardHeader>
           <CardContent>
-            {data.recentActivity.map((a) => (
-              <div key={a.id} className="flex items-start justify-between gap-3 border-b border-[#F6EFE9] py-3 last:border-0">
-                <div>
-                  <p className="text-sm font-medium">{a.action}</p>
-                  <p className="text-xs text-muted-foreground">{a.entity} · {a.user}</p>
-                </div>
-                <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(a.time)}</span>
+            <p className="mb-3 text-sm text-muted-foreground">
+              <strong className="text-lg text-foreground">{formatNumber(openTickets)}</strong>{" "}
+              needing attention
+            </p>
+            {TICKET_STATES.map((t) => (
+              <div
+                key={t.key}
+                className="flex items-center justify-between border-b border-[#F6EFE9] py-2.5 last:border-0"
+              >
+                <span className="text-sm">{t.label}</span>
+                <span className="font-semibold">{formatNumber(tickets[t.key])}</span>
               </div>
             ))}
           </CardContent>
