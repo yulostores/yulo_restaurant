@@ -9,7 +9,6 @@
 //   PATCH /owner/:rId/settings/delivery  { radiusKm, baseCharge, freeThreshold, estimatedMinutes }
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ImagePlus, ImageUp, Lock, X } from "lucide-react";
 
@@ -26,6 +25,7 @@ import {
 import { ownerApi } from "@/api/owner.api";
 import { catalogApi } from "@/api/catalog.api";
 import DashboardLayout from "@/components/DashboardLayout";
+import ApprovalNotice from "@/components/ApprovalNotice";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -391,7 +391,6 @@ function validate(form) {
 }
 
 export default function StoreSettings() {
-  const navigate = useNavigate();
   const { restaurantId, fetchRestaurants, updateRestaurant } = useOwnerAuth();
   const { data: serverSettings, isLoading, isError } = useSettings(restaurantId);
   // Hours and delivery config have their own endpoints.
@@ -558,8 +557,11 @@ export default function StoreSettings() {
           pincode: pincode.trim(),
         },
       });
+      // Deliberately stays on this screen: the restaurant is created with
+      // approvalStatus "pending", so /dashboard is locked (ApprovalGate) until
+      // an admin approves it. Refreshing the context swaps this form for the
+      // full settings form plus the "under review" notice.
       await fetchRestaurants();
-      navigate("/dashboard", { replace: true });
     } catch (err) {
       setCreateError(err.message ?? "Failed to create restaurant");
     } finally {
@@ -574,12 +576,15 @@ export default function StoreSettings() {
 
     return (
       <DashboardLayout>
-        <div className="flex flex-col items-center justify-center py-20">
-          <Card className="w-full max-w-md">
+        <div className="mx-auto w-full max-w-md py-10">
+          <ApprovalNotice className="mb-5" />
+          <Card className="w-full">
             <CardHeader className="pb-4">
               <h2 className="text-lg font-bold">Add Your Restaurant</h2>
               <p className="text-sm text-muted-foreground">
-                Submit your restaurant profile for platform review.
+                This is step one. Submitting these details sends your restaurant to the
+                Yulo admin team for review — the rest of the portal (staff, menu, QR
+                codes, offers, orders) unlocks only once they approve it.
               </p>
             </CardHeader>
             <CardContent>
@@ -633,8 +638,8 @@ export default function StoreSettings() {
                 <p className="text-xs text-muted-foreground">
                   We place your restaurant on the map from this address, so customers
                   nearby can find you — add the state and pincode for a more accurate
-                  match. Your restaurant is submitted for admin review; menu and staff
-                  management unlock once it&apos;s approved.
+                  match. Your restaurant goes to the Yulo admin team for review the
+                  moment you submit — you can keep editing these details while you wait.
                 </p>
                 {createError && (
                   <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{createError}</p>
@@ -686,6 +691,9 @@ export default function StoreSettings() {
             Manage your restaurant profile, hours, delivery, and compliance details.
           </p>
         </div>
+
+        {/* Renders nothing once the restaurant is approved. */}
+        <ApprovalNotice className="mb-5" />
 
         {/* Restaurant info + brand assets */}
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.7fr_1fr]">

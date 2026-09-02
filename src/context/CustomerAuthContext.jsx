@@ -1,6 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { authApi } from "@/api/auth.api";
-import { setAccessToken, getAccessToken } from "@/api/client";
+import {
+  setAccessToken,
+  getAccessToken,
+  refreshSession,
+  isAuthFailure,
+} from "@/api/client";
 
 // Customer auth: email/password (POST /api/auth/{signup,login}) or phone/OTP
 // (POST /api/auth/customer/otp/{send,verify}). Signup always creates a
@@ -30,21 +35,34 @@ export function CustomerAuthProvider({ children }) {
   }, [customer]);
 
   // Silent refresh if the profile survived a reload but the token did not.
+  // Only a real 401 ends the session — a 429, 5xx or dropped connection leaves
+  // the refresh cookie valid, so keep the diner signed in and let the client
+  // interceptor refresh on the next request. See OwnerAuthContext for the full
+  // reasoning.
   useEffect(() => {
-    if (customer && !getAccessToken()) {
-      authApi.refresh()
-        .then(({ data }) => setAccessToken(data.data.accessToken))
-        .catch(() => { setCustomer(null); localStorage.removeItem(PROFILE_KEY); })
-        .finally(() => setLoading(false));
-    } else {
+    if (!customer || getAccessToken("customer")) {
       setLoading(false);
+      return;
     }
+
+    let cancelled = false;
+    refreshSession("customer")
+      .catch((err) => {
+        if (cancelled || !isAuthFailure(err)) return;
+        setCustomer(null);
+        localStorage.removeItem(PROFILE_KEY);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const login = useCallback(async ({ email, password }) => {
     const { data } = await authApi.customerLogin({ email, password });
     const { user: u, accessToken } = data.data;
-    setAccessToken(accessToken);
+    setAccessToken("customer", accessToken);
     setCustomer(u);
     return u;
   }, []);
@@ -52,7 +70,7 @@ export function CustomerAuthProvider({ children }) {
   const signup = useCallback(async ({ name, email, password }) => {
     const { data } = await authApi.customerSignup({ name, email, password });
     const { user: u, accessToken } = data.data;
-    setAccessToken(accessToken);
+    setAccessToken("customer", accessToken);
     setCustomer(u);
     return u;
   }, []);
@@ -67,14 +85,14 @@ export function CustomerAuthProvider({ children }) {
   const verifyOtp = useCallback(async ({ phone, code, tosAccepted = true }) => {
     const { data } = await authApi.customerOtpVerify({ phone, code, tosAccepted });
     const { user: u, accessToken, isNewUser } = data.data;
-    setAccessToken(accessToken);
+    setAccessToken("customer", accessToken);
     setCustomer(u);
     return { user: u, isNewUser };
   }, []);
 
   const logout = useCallback(async () => {
     try { await authApi.logout(); } catch { /* silent */ }
-    setAccessToken(null);
+    setAccessToken("customer", null);
     setCustomer(null);
   }, []);
 

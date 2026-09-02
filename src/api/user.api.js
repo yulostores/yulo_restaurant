@@ -7,17 +7,22 @@ import client from "./client";
 // Documented editable fields are `name` and `phone`. There is no password-change
 // endpoint — see API-GAPS.md.
 
+// `_portal` tags every call as the owner session. /users/me serves customers too,
+// so the URL alone cannot say which of the two logged-in sessions on this origin
+// the request belongs to — the customer app reaches it via customer.api.js.
+const OWNER = { _portal: "owner" };
+
 export const userApi = {
-  getMe:    ()     => client.get("/users/me"),
-  updateMe: (body) => client.patch("/users/me", body),
+  getMe:    ()     => client.get("/users/me", OWNER),
+  updateMe: (body) => client.patch("/users/me", body, OWNER),
 
   // Same endpoint, sent as multipart/form-data so an `avatar` file (max 2 MB, JPEG/PNG/
   // WebP) can ride along with the text fields. Axios derives the multipart boundary from
   // the FormData itself, so setting Content-Type by hand here would corrupt the body.
-  updateMeMultipart: (formData) => client.patch("/users/me", formData),
+  updateMeMultipart: (formData) => client.patch("/users/me", formData, OWNER),
 
-  addAddress:    (body)   => client.post("/users/me/addresses", body),
-  removeAddress: (addrId) => client.delete(`/users/me/addresses/${addrId}`),
+  addAddress:    (body)   => client.post("/users/me/addresses", body, OWNER),
+  removeAddress: (addrId) => client.delete(`/users/me/addresses/${addrId}`, OWNER),
 };
 
 // Serialises a profile patch into FormData, appending a File as-is. Mirrors

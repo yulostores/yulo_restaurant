@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAdminStores, useStoreAction } from "@/hooks/admin/useAdmin";
 import AdminLayout, { formatNumber } from "./AdminLayout";
+import StoreReviewPanel from "./StoreReviewPanel";
 
 const STATUS_TABS = [
   { value: "",          label: "All" },
@@ -41,13 +42,20 @@ const STATUS_VARIANT = {
   expired: "muted",
 };
 
+// The API has no "resubmit" endpoint: a rejected owner simply re-saves their
+// store settings, which bumps `updatedAt` and nothing else. Comparing it against
+// `reviewedAt` is the only signal an admin gets that a rejected application has
+// been corrected and is worth a second look (approve accepts any status).
+function editedSinceReview(store) {
+  if (!store.reviewedAt || !store.updatedAt) return false;
+  return new Date(store.updatedAt) > new Date(store.reviewedAt);
+}
+
 // Which transitions the server accepts from each approvalStatus (API.md).
+// Approve/reject deliberately aren't here: an application is decided in the
+// review drawer, where the admin can actually see what the owner submitted.
 function actionsFor(status) {
   switch (status) {
-    case "pending":   return [
-      { action: "approve", label: "Approve", primary: true },
-      { action: "reject",  label: "Reject" },
-    ];
     case "active":    return [{ action: "suspend", label: "Suspend" }];
     case "suspended": return [{ action: "reactivate", label: "Reactivate", primary: true }];
     default:          return [];
@@ -60,6 +68,8 @@ export default function Stores() {
   const [search, setSearch] = useState("");
   const [page, setPage]     = useState(1);
   const [actionError, setActionError] = useState("");
+  // Store currently open in the review drawer.
+  const [reviewingId, setReviewingId] = useState(null);
 
   const params = {
     page,
@@ -78,13 +88,8 @@ export default function Stores() {
 
   async function run(action, store) {
     setActionError("");
-    let reason;
-    if (action === "reject") {
-      reason = window.prompt(`Reject "${store.name}" — reason for the owner:`);
-      if (!reason) return;
-    }
     try {
-      await storeAction.mutateAsync({ action, id: store._id, reason });
+      await storeAction.mutateAsync({ action, id: store._id });
     } catch (err) {
       setActionError(err.message);
     }
@@ -102,6 +107,25 @@ export default function Stores() {
     >
       {isError ? <p className="text-sm text-brand-maroon">Failed to load: {error.message}</p> : null}
       {actionError ? <p className="text-sm text-brand-maroon">{actionError}</p> : null}
+
+      {/* Applications waiting on a decision. Until an admin approves one, that
+          owner's portal is locked to Store Settings and Profile only. */}
+      {Number(counts.pending) > 0 && status !== "pending" ? (
+        <button
+          type="button"
+          onClick={() => changeFilter(setStatus, "pending")}
+          className="flex w-full items-center justify-between gap-3 rounded-xl border border-[#F5C99B] bg-[#FFF7ED] px-4 py-3 text-left transition hover:brightness-[0.99]"
+        >
+          <span className="text-sm">
+            <span className="font-semibold">
+              {formatNumber(counts.pending)} restaurant
+              {Number(counts.pending) === 1 ? "" : "s"} awaiting approval
+            </span>
+            {" — their owners can't add staff, menu items or QR codes until you decide."}
+          </span>
+          <span className="shrink-0 text-sm font-semibold text-[#D9480F]">Review →</span>
+        </button>
+      ) : null}
 
       {/* Status tabs with live counts */}
       <div className="flex flex-wrap gap-1.5">
@@ -171,8 +195,13 @@ export default function Stores() {
                     <TableRow key={s._id}>
                       <TableCell className="pl-6">
                         <div className="font-semibold">{s.name}</div>
-                        {s.rejectionReason ? (
+                        {s.approvalStatus === "rejected" && s.rejectionReason ? (
                           <div className="text-xs text-brand-maroon">{s.rejectionReason}</div>
+                        ) : null}
+                        {s.approvalStatus === "rejected" && editedSinceReview(s) ? (
+                          <div className="text-xs font-semibold text-[#D9480F]">
+                            Owner has updated their details since the rejection
+                          </div>
                         ) : null}
                       </TableCell>
                       <TableCell>
@@ -197,22 +226,30 @@ export default function Stores() {
                       </TableCell>
                       <TableCell className="pr-6 text-right">
                         <div className="flex justify-end gap-2">
-                          {actions.length === 0 ? (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          ) : (
-                            actions.map((a) => (
-                              <Button
-                                key={a.action}
-                                size="sm"
-                                variant={a.primary ? "default" : "outline"}
-                                disabled={storeAction.isPending}
-                                onClick={() => run(a.action, s)}
-                                className={a.primary ? "bg-brand-gradient text-white hover:brightness-105" : ""}
-                              >
-                                {a.label}
-                              </Button>
-                            ))
-                          )}
+                          <Button
+                            size="sm"
+                            variant={s.approvalStatus === "pending" ? "default" : "outline"}
+                            onClick={() => setReviewingId(s._id)}
+                            className={
+                              s.approvalStatus === "pending"
+                                ? "bg-brand-gradient text-white hover:brightness-105"
+                                : ""
+                            }
+                          >
+                            {s.approvalStatus === "pending" ? "Review" : "Details"}
+                          </Button>
+                          {actions.map((a) => (
+                            <Button
+                              key={a.action}
+                              size="sm"
+                              variant={a.primary ? "default" : "outline"}
+                              disabled={storeAction.isPending}
+                              onClick={() => run(a.action, s)}
+                              className={a.primary ? "bg-brand-gradient text-white hover:brightness-105" : ""}
+                            >
+                              {a.label}
+                            </Button>
+                          ))}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -230,6 +267,10 @@ export default function Stores() {
           </div>
         </CardContent>
       </Card>
+
+      {reviewingId ? (
+        <StoreReviewPanel storeId={reviewingId} onClose={() => setReviewingId(null)} />
+      ) : null}
 
       {data && data.pages > 1 ? (
         <div className="flex items-center justify-center gap-3">

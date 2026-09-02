@@ -21,6 +21,7 @@ import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { useSettings } from "@/hooks/owner/useSettings";
 import { userApi, buildProfileFormData } from "@/api/user.api";
 import DashboardLayout from "@/components/DashboardLayout";
+import ApprovalNotice from "@/components/ApprovalNotice";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -170,6 +171,8 @@ export default function Profile() {
 
   return (
     <DashboardLayout>
+      {/* Renders nothing once the restaurant is approved. */}
+      <ApprovalNotice />
       <form onSubmit={handleSave} className="flex flex-col gap-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>

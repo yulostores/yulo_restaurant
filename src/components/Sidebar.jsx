@@ -13,12 +13,14 @@ import {
   Store,
   UserRound,
   Users,
+  Lock,
   X,
 } from "lucide-react";
 
 import RestaurantLogo from "@/components/RestaurantLogo";
 import { cn } from "@/lib/utils";
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
+import { isAlwaysAllowed } from "@/lib/approval";
 
 const NAV_SECTIONS = [
   {
@@ -75,18 +77,25 @@ function isActive(pathname, to) {
   return pathname === to;
 }
 
-function NavItem({ icon: Icon, label, active, onClick }) {
+function NavItem({ icon: Icon, label, active, locked, onClick }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={locked}
+      title={locked ? "Unlocks once a Yulo admin approves your restaurant" : undefined}
+      aria-disabled={locked || undefined}
       className={cn(
-        "flex w-full items-center gap-3 rounded-lg px-4 py-2 text-left text-sm font-medium text-brand-cream/80 transition-colors hover:bg-brand-cream/10 hover:text-brand-cream",
-        active && "bg-brand-cream/10 text-brand-cream",
+        "flex w-full items-center gap-3 rounded-lg px-4 py-2 text-left text-sm font-medium text-brand-cream/80 transition-colors",
+        locked
+          ? "cursor-not-allowed text-brand-cream/35 hover:bg-transparent"
+          : "hover:bg-brand-cream/10 hover:text-brand-cream",
+        active && !locked && "bg-brand-cream/10 text-brand-cream",
       )}
     >
       <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-      <span>{label}</span>
+      <span className="flex-1">{label}</span>
+      {locked ? <Lock className="h-3.5 w-3.5 shrink-0" /> : null}
     </button>
   );
 }
@@ -94,7 +103,7 @@ function NavItem({ icon: Icon, label, active, onClick }) {
 export default function Sidebar({ isOpen, onClose }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { logout, restaurant } = useOwnerAuth();
+  const { logout, restaurant, isApproved } = useOwnerAuth();
   // Falls back to the product name only until the owner has a restaurant on file
   // (fresh signup, pre-approval) — otherwise the sidebar carries their own brand.
   const storeName = restaurant?.name || "Yulo Stores";
@@ -143,6 +152,20 @@ export default function Sidebar({ isOpen, onClose }) {
             </button>
           </div>
 
+          {!isApproved ? (
+            <div className="mx-4 mb-4 rounded-lg border border-brand-cream/20 bg-brand-cream/10 px-3 py-2.5">
+              <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-brand-cream/90">
+                <Lock className="h-3 w-3" />
+                {restaurant ? "Awaiting approval" : "Setup incomplete"}
+              </p>
+              <p className="mt-1 text-[11px] leading-snug text-brand-cream/60">
+                {restaurant
+                  ? "A Yulo admin is reviewing your restaurant. These sections unlock as soon as it's approved."
+                  : "Add your restaurant in Store Settings to send it for admin review."}
+              </p>
+            </div>
+          ) : null}
+
           <nav className="flex flex-col gap-4 px-4 pb-6">
             {NAV_SECTIONS.map((section) => (
               <div key={section.title} className="flex flex-col gap-1">
@@ -155,6 +178,9 @@ export default function Sidebar({ isOpen, onClose }) {
                     icon={item.icon}
                     label={item.label}
                     active={isActive(pathname, item.to)}
+                    // Mirrors ApprovalGate: everything but Store Settings and
+                    // Profile stays locked until the restaurant is approved.
+                    locked={!isApproved && !isAlwaysAllowed(item.to)}
                     onClick={() => handleNav(item.to)}
                   />
                 ))}

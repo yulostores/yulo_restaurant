@@ -28,6 +28,7 @@ import AdminLogin from "./screens/admin/AdminLogin";
 import OwnerLoginPage from "./screens/auth/OwnerLoginPage";
 import StaffLoginPage from "./screens/auth/StaffLoginPage";
 import OwnerRoute from "./components/OwnerRoute";
+import ApprovalGate from "./components/ApprovalGate";
 import StaffRoute from "./components/StaffRoute";
 import AdminRoute from "./components/AdminRoute";
 
@@ -39,20 +40,23 @@ export default function App() {
       <Route path="/staff/login" element={<StaffLoginPage />} />
       <Route path="/admin/login" element={<AdminLogin />} />
 
-      {/* ── Owner portal (protected) ─────────────────────────────────── */}
-      <Route path="/" element={<OwnerRoute><OwnerDashboard /></OwnerRoute>} />
-      <Route path="/dashboard" element={<OwnerRoute><OwnerDashboard /></OwnerRoute>} />
-      <Route path="/menu-management" element={<OwnerRoute><MenuManagement /></OwnerRoute>} />
-      <Route path="/qr" element={<OwnerRoute><QrManagement /></OwnerRoute>} />
-      <Route path="/offers" element={<OwnerRoute><Offers /></OwnerRoute>} />
-      <Route path="/orders" element={<OwnerRoute><ManageOrders /></OwnerRoute>} />
-      <Route path="/bill" element={<OwnerRoute><BillDetails /></OwnerRoute>} />
-      <Route path="/cancellations" element={<OwnerRoute><Cancellations /></OwnerRoute>} />
-      <Route path="/menu-items" element={<OwnerRoute><MenuItems /></OwnerRoute>} />
-      <Route path="/live-monitor" element={<OwnerRoute><LiveMonitor /></OwnerRoute>} />
-      <Route path="/store-settings" element={<OwnerRoute><StoreSettings /></OwnerRoute>} />
-      <Route path="/staff" element={<OwnerRoute><StaffManagement /></OwnerRoute>} />
-      <Route path="/profile" element={<OwnerRoute><Profile /></OwnerRoute>} />
+      {/* ── Owner portal (protected) ───────────────────────────────────
+          OwnerRoute checks the session; ApprovalGate then locks everything
+          except /store-settings and /profile until an admin sets the
+          restaurant's approvalStatus to "active" (see lib/approval.js). */}
+      <Route path="/" element={<OwnerRoute><ApprovalGate><OwnerDashboard /></ApprovalGate></OwnerRoute>} />
+      <Route path="/dashboard" element={<OwnerRoute><ApprovalGate><OwnerDashboard /></ApprovalGate></OwnerRoute>} />
+      <Route path="/menu-management" element={<OwnerRoute><ApprovalGate><MenuManagement /></ApprovalGate></OwnerRoute>} />
+      <Route path="/qr" element={<OwnerRoute><ApprovalGate><QrManagement /></ApprovalGate></OwnerRoute>} />
+      <Route path="/offers" element={<OwnerRoute><ApprovalGate><Offers /></ApprovalGate></OwnerRoute>} />
+      <Route path="/orders" element={<OwnerRoute><ApprovalGate><ManageOrders /></ApprovalGate></OwnerRoute>} />
+      <Route path="/bill" element={<OwnerRoute><ApprovalGate><BillDetails /></ApprovalGate></OwnerRoute>} />
+      <Route path="/cancellations" element={<OwnerRoute><ApprovalGate><Cancellations /></ApprovalGate></OwnerRoute>} />
+      <Route path="/menu-items" element={<OwnerRoute><ApprovalGate><MenuItems /></ApprovalGate></OwnerRoute>} />
+      <Route path="/live-monitor" element={<OwnerRoute><ApprovalGate><LiveMonitor /></ApprovalGate></OwnerRoute>} />
+      <Route path="/store-settings" element={<OwnerRoute><ApprovalGate><StoreSettings /></ApprovalGate></OwnerRoute>} />
+      <Route path="/staff" element={<OwnerRoute><ApprovalGate><StaffManagement /></ApprovalGate></OwnerRoute>} />
+      <Route path="/profile" element={<OwnerRoute><ApprovalGate><Profile /></ApprovalGate></OwnerRoute>} />
 
       {/* ── Customer QR ordering app (public — OTP guards internally) ── */}
       <Route path="/order/*" element={<CustomerApp />} />
@@ -64,12 +68,12 @@ export default function App() {
       {/* ── Manager portal ────────────────────────────────────────────── */}
       {/* The backend has no `manager` role — these screens run on the owner
           session and read the owner-scoped endpoints. See API-GAPS.md. */}
-      <Route path="/manager" element={<OwnerRoute><ManagerDashboard /></OwnerRoute>} />
-      <Route path="/manager/dashboard" element={<OwnerRoute><ManagerDashboard /></OwnerRoute>} />
-      <Route path="/manager/orders" element={<OwnerRoute><ManagerOrders /></OwnerRoute>} />
-      <Route path="/manager/live" element={<OwnerRoute><ManagerLiveMonitoring /></OwnerRoute>} />
-      <Route path="/manager/requests" element={<OwnerRoute><ManagerRequests /></OwnerRoute>} />
-      <Route path="/manager/tables" element={<OwnerRoute><ManagerTables /></OwnerRoute>} />
+      <Route path="/manager" element={<OwnerRoute><ApprovalGate><ManagerDashboard /></ApprovalGate></OwnerRoute>} />
+      <Route path="/manager/dashboard" element={<OwnerRoute><ApprovalGate><ManagerDashboard /></ApprovalGate></OwnerRoute>} />
+      <Route path="/manager/orders" element={<OwnerRoute><ApprovalGate><ManagerOrders /></ApprovalGate></OwnerRoute>} />
+      <Route path="/manager/live" element={<OwnerRoute><ApprovalGate><ManagerLiveMonitoring /></ApprovalGate></OwnerRoute>} />
+      <Route path="/manager/requests" element={<OwnerRoute><ApprovalGate><ManagerRequests /></ApprovalGate></OwnerRoute>} />
+      <Route path="/manager/tables" element={<OwnerRoute><ApprovalGate><ManagerTables /></ApprovalGate></OwnerRoute>} />
 
       {/* ── Platform Admin portal ─────────────────────────────────────── */}
       <Route path="/admin/*" element={<AdminRoute><AdminApp /></AdminRoute>} />

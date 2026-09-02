@@ -15,6 +15,8 @@ import client from "./client";
 
 export const authApi = {
   // ── Shared (customer / owner / admin) ───────────────────────────────────
+  // Prefer refreshSession() from api/client — it is single-flight, retries
+  // transient failures and tells an expired session apart from a flaky one.
   refresh: () => client.post("/auth/refresh"),
   logout:  () => client.post("/auth/logout"),
 
