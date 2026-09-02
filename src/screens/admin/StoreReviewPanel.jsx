@@ -13,7 +13,7 @@
 // made here reaches their screen within a minute (or on their next tab focus)
 // without a re-login.
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +26,8 @@ import {
   useStoreAction,
   useVerifyDocument,
 } from "@/hooks/admin/useAdmin";
+import DocumentViewer, { documentFileName } from "@/components/DocumentViewer";
+import { adminApi } from "@/api/admin.api";
 import { formatHhmm } from "@/lib/hours";
 
 const STATUS_VARIANT = {
@@ -105,6 +107,9 @@ export default function StoreReviewPanel({ storeId, onClose }) {
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
   const [actionError, setActionError] = useState("");
+  // Held as a document *type* rather than the document itself, so verifying one keeps
+  // the viewer in step with the refetched store instead of showing a stale status.
+  const [viewingDocType, setViewingDocType] = useState(null);
 
   async function run(action, extra) {
     setActionError("");
@@ -139,6 +144,15 @@ export default function StoreReviewPanel({ storeId, onClose }) {
   const missing = checklist.filter((c) => !c.ok);
   const settings = store?.settings ?? {};
   const hours = store?.operatingHours ?? [];
+  const viewedDoc = viewingDocType
+    ? (store?.documents ?? []).find((d) => d.type === viewingDocType)
+    : null;
+  const viewedDocId = viewedDoc?._id;
+  // Stable identity so the viewer fetches the file once per document, not per render.
+  const fetchViewedFile = useCallback(
+    () => adminApi.getStoreDocumentFile(storeId, viewedDocId),
+    [storeId, viewedDocId],
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -296,8 +310,9 @@ export default function StoreReviewPanel({ storeId, onClose }) {
               <Section title="Documents">
                 {(store.documents ?? []).length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    No documents uploaded. The owner portal has no document upload screen
-                    yet, so this is expected — check the licence numbers above instead.
+                    Nothing uploaded yet. The owner uploads these from Store Settings →
+                    Compliance Documents; until then, only the licence numbers above are
+                    available to check against.
                   </p>
                 ) : (
                   <ul className="flex flex-col gap-2">
@@ -309,14 +324,13 @@ export default function StoreReviewPanel({ storeId, onClose }) {
                         <div className="min-w-0">
                           <p className="text-sm font-medium">{DOC_LABEL[d.type] ?? d.type}</p>
                           {d.url ? (
-                            <a
-                              href={d.url}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => setViewingDocType(d.type)}
                               className="text-xs text-blue-700 underline"
                             >
-                              Open document
-                            </a>
+                              View {documentFileName(d)}
+                            </button>
                           ) : null}
                         </div>
                         <div className="flex items-center gap-2">
@@ -468,6 +482,16 @@ export default function StoreReviewPanel({ storeId, onClose }) {
           </footer>
         ) : null}
       </aside>
+
+      {/* Opened in place — a reviewer should not have to leave the panel, or hand a raw
+          asset URL to a new tab, to look at what they are approving. */}
+      <DocumentViewer
+        open={!!viewedDoc}
+        title={DOC_LABEL[viewedDoc?.type] ?? viewedDoc?.type}
+        doc={viewedDoc}
+        fetchFile={fetchViewedFile}
+        onClose={() => setViewingDocType(null)}
+      />
     </div>
   );
 }

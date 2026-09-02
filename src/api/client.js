@@ -19,7 +19,7 @@ export const PORTALS = ["owner", "customer", "admin"];
 const _tokens = { owner: null, customer: null, admin: null };
 let _staffToken = null;
 
-function assertPortal(portal) {
+export function assertPortal(portal) {
   if (!PORTALS.includes(portal)) throw new Error(`Unknown portal: ${portal}`);
   return portal;
 }
@@ -150,14 +150,36 @@ export function isAuthFailure(err) {
 // unable to load anything.
 const RECOVERABLE_401 = new Set(["TOKEN_EXPIRED", "INVALID_TOKEN", "UNAUTHORIZED"]);
 
+// A failed request made with `responseType: "blob"` (document previews) hands back an
+// error body that is a Blob, not the parsed envelope — so `data.code` and `data.message`
+// are both undefined. That silently costs more than a vague message: the 401 auto-refresh
+// below keys off `code`, so without this a document fetch on an expired token would fail
+// outright instead of healing like every other call. Read the blob back into the envelope
+// the rest of this interceptor expects.
+async function unpackBlobError(err) {
+  const data = err.response?.data;
+  if (typeof Blob === "undefined" || !(data instanceof Blob)) return;
+  if (data.type && !data.type.includes("json")) return;
+  try {
+    err.response.data = JSON.parse(await data.text());
+  } catch {
+    // Not JSON after all — leave it alone and let normalise fall back to err.message.
+  }
+}
+
 client.interceptors.response.use(
   (res) => res,
   async (err) => {
+    await unpackBlobError(err);
     const original = err.config ?? {};
     const code = err.response?.data?.code;
     const portal = original.url === undefined ? null : portalForRequest(original);
 
     // Staff token expired or revoked — clear storage and redirect to login.
+    // The redirect is skipped when the login screen is already mounted: its own
+    // boot check (GET /staff/auth/me) is exactly the call that surfaces a stale
+    // token, and replacing the URL with the one already showing would reload the
+    // page instead of letting StaffAuthContext fall through to the form.
     if (
       portal === "staff" &&
       (code === "TOKEN_EXPIRED" || code === "INVALID_TOKEN") &&
@@ -165,7 +187,9 @@ client.interceptors.response.use(
     ) {
       setStaffToken(null);
       localStorage.removeItem("yulo_staff_profile");
-      window.location.replace("/staff/login");
+      if (!window.location.pathname.startsWith("/staff/login")) {
+        window.location.replace("/staff/login");
+      }
       return Promise.reject(normalise(err, code));
     }
 

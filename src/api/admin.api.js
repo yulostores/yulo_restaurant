@@ -44,6 +44,15 @@ export const adminApi = {
   verifyDocument: (id, docId, status) =>
     client.patch(`/admin/stores/${id}/documents/${docId}`, { status }),
 
+  // The document's bytes, streamed through the API with their real content type.
+  // Never linked to storage directly: the Cloudinary URL is public to anyone holding it
+  // and refuses to serve PDFs outright, so the file is fetched here as a Blob and shown
+  // from an object URL.
+  getStoreDocumentFile: (id, docId) =>
+    client
+      .get(`/admin/stores/${id}/documents/${docId}/file`, { responseType: "blob" })
+      .then((r) => r.data),
+
   // Soft delete — sets isActive:false, leaves approvalStatus untouched.
   removeStore: (id) => client.delete(`/admin/stores/${id}`),
 

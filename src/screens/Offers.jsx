@@ -2,8 +2,8 @@
 // with a full discount configuration, a live coupon preview, and a managed list
 // of active/scheduled/expired offers (PRD §17).
 
-import { useMemo, useState } from "react";
-import { ArrowLeft, Copy, ImagePlus, Pencil, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Copy, ImagePlus, Pencil, Trash2, X } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import {
@@ -56,6 +56,10 @@ const STATUS_VARIANT = { active: "ok", draft: "muted" };
 
 const EMPTY = {
   name: "",
+  // `image` is the File waiting to be uploaded; `imageUrl` the Cloudinary URL already
+  // stored on the offer. A pending File wins in the preview.
+  image: null,
+  imageUrl: "",
   type: "coupon",
   code: "",
   description: "",
@@ -85,6 +89,43 @@ function validityLabel(offer) {
   return `${fmt(offer.validFrom)} – ${fmt(offer.validTo)}`;
 }
 
+const FIELD_LABELS = {
+  offerName:              "Offer name",
+  code:                   "Coupon code",
+  percentage:             "Discount (%)",
+  flatAmount:             "Discount amount",
+  freeItemId:             "Free item",
+  applicableTableNumbers: "Table numbers",
+  minimumOrderValue:      "Minimum order value",
+  startDate:              "Start date",
+  endDate:                "End date",
+};
+
+// A rejected body comes back as a generic "Invalid discount data" message with the real
+// reason in `details.fieldErrors` (zod's flatten). Showing only the message left the
+// screen silent while the network tab showed a 400.
+function describeApiError(err) {
+  const parts = Object.entries(err?.details?.fieldErrors ?? {})
+    .filter(([, messages]) => messages?.length)
+    .map(([field, messages]) => `${FIELD_LABELS[field] ?? field}: ${messages[0]}`);
+  if (parts.length) return parts.join(" · ");
+
+  const formErrors = err?.details?.formErrors;
+  if (formErrors?.length) return formErrors[0];
+  return err?.message ?? "Something went wrong";
+}
+
+// ISO timestamp → the YYYY-MM-DD an <input type="date"> expects, in local time. Slicing
+// the ISO string instead lands a day early anywhere ahead of UTC: an offer starting
+// midnight IST is stored as 18:30Z the previous day.
+function toDateInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 // Toggle chip used for offer type, discount type, and applicable-for.
 function Pill({ active, onClick, children, className }) {
   return (
@@ -101,6 +142,110 @@ function Pill({ active, onClick, children, className }) {
     >
       {children}
     </button>
+  );
+}
+
+// The endpoint accepts JPEG/PNG/WebP up to 2MB (middleware/upload.js on the server).
+// Checking here too turns a rejected 400 into an inline message before the round trip.
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+function imageProblem(file) {
+  if (!IMAGE_TYPES.includes(file.type)) return "Offer image must be a PNG, JPG or WebP";
+  if (file.size > MAX_IMAGE_BYTES) return "Offer image must be under 2MB";
+  return "";
+}
+
+// Blob URL for a freshly picked File, revoked when it is replaced or the screen unmounts.
+function useObjectUrl(file) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    if (!file) {
+      setUrl("");
+      return undefined;
+    }
+    const next = URL.createObjectURL(file);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [file]);
+  return url;
+}
+
+// Click-or-drop picker for the offer artwork. `preview` is whatever should be shown right
+// now — the pending file's blob URL, or the stored Cloudinary URL.
+function ImageDropzone({ preview, hasFile, onSelect, onClear, onError }) {
+  const [dragging, setDragging] = useState(false);
+
+  function accept(file) {
+    if (!file) return;
+    const problem = imageProblem(file);
+    if (problem) {
+      onError(problem);
+      return;
+    }
+    onError("");
+    onSelect(file);
+  }
+
+  if (preview) {
+    return (
+      <div className="relative h-28 overflow-hidden rounded-xl border border-brand-cream">
+        <img src={preview} alt="Offer artwork" className="h-full w-full object-cover" />
+        <div className="absolute right-2 top-2 flex gap-2">
+          <label className="cursor-pointer rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-[#5a403e] hover:bg-white">
+            Replace
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                accept(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {hasFile ? (
+            <button
+              type="button"
+              onClick={() => { onError(""); onClear(); }}
+              className="grid h-7 w-7 place-items-center rounded-full bg-white/90 text-[#5a403e] hover:bg-white"
+              aria-label="Remove image"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <label
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        accept(e.dataTransfer.files?.[0]);
+      }}
+      className={cn(
+        "flex h-28 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed bg-[#FCFAF7] text-center text-muted-foreground hover:border-brand-orange/50",
+        dragging ? "border-brand-orange bg-brand-orange/5" : "border-[#E2DFDE]",
+      )}
+    >
+      <ImagePlus className="h-5 w-5" />
+      <span className="text-sm">Click to upload or drag and drop</span>
+      <span className="text-xs">PNG, JPG up to 2MB</span>
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          accept(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+    </label>
   );
 }
 
@@ -134,6 +279,11 @@ export default function Offers() {
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
+  // Blob previews for the pending files, created once here and shared with the dropzone
+  // and the live preview so a File is never turned into two object URLs.
+  const formImagePreview = useObjectUrl(form.image);
+  const editImagePreview = useObjectUrl(editForm?.image ?? null);
+
   // The form already speaks the API's vocabulary, so this is a straight map
   // onto the discriminated-union body documented for POST /discounts.
   function toPayload(f) {
@@ -143,8 +293,11 @@ export default function Offers() {
       code:               f.code || undefined,
       applicableTo:       f.applicableFor,
       minimumOrderValue:  f.minOrder ? Number(f.minOrder) : 0,
-      startDate:          f.validFrom,
-      endDate:            f.validTo,
+      // Both dates arrive from <input type="date"> as bare YYYY-MM-DD, i.e. midnight. Sent
+      // as-is the offer expired the instant its last day began, and a single-day offer was
+      // rejected outright — the server requires endDate > startDate.
+      startDate:          new Date(`${f.validFrom}T00:00:00`).toISOString(),
+      endDate:            new Date(`${f.validTo}T23:59:59.999`).toISOString(),
     };
 
     if (payload.type === "percentage")  payload.percentage  = Number(f.discountValue);
@@ -159,13 +312,50 @@ export default function Offers() {
     return payload;
   }
 
+  // The endpoint takes multipart/form-data when artwork rides along, so the payload is
+  // flattened: arrays go over JSON-encoded (the server parses them back) and the file is
+  // appended as the `image` part. Without a file it stays a plain JSON body.
+  function toBody(f) {
+    const payload = toPayload(f);
+    if (!(f.image instanceof File)) return payload;
+
+    const fd = new FormData();
+    for (const [key, value] of Object.entries(payload)) {
+      if (value === undefined || value === null) continue;
+      if (typeof value === "object") fd.append(key, JSON.stringify(value));
+      else fd.append(key, String(value));
+    }
+    fd.append("image", f.image);
+    return fd;
+  }
+
   // Drafts live on the server: POST /discounts always creates status "draft",
   // and PATCH …/publish promotes it to "active".
   const drafts = useMemo(() => offers.filter((o) => o.status === "draft"), [offers]);
 
+  // Mirrors the server's schema (controllers/owner/discount.controller.js) so an
+  // incomplete form is answered here instead of coming back as a bare 400.
   function validate(f) {
     if (!f.name.trim()) return "Add an offer name";
+    if (f.type === "coupon" && !f.code.trim()) return "Add a coupon code";
+
+    const raw = String(f.discountValue ?? "").trim();
+    const value = Number(raw);
+    if (f.discountType === "percentage") {
+      if (!raw) return "Enter a discount percentage";
+      if (!Number.isFinite(value) || value < 1 || value > 100)
+        return "Discount must be between 1% and 100%";
+    }
+    if (f.discountType === "flat_amount" || f.discountType === "tablewise") {
+      if (!raw) return "Enter a discount amount";
+      if (!Number.isFinite(value) || value <= 0) return "Discount amount must be more than ₹0";
+    }
+    if (f.discountType === "free_item" && !f.item) return "Pick the free item";
+    if (f.discountType === "tablewise" && !f.tableNumbers.trim())
+      return "List at least one table number";
+
     if (!f.validFrom || !f.validTo) return "Start date and end date are required";
+    if (f.validTo < f.validFrom) return "End date cannot be before the start date";
     return "";
   }
 
@@ -174,10 +364,10 @@ export default function Offers() {
     if (problem) { setError(problem); return; }
     setError("");
     try {
-      await createMutation.mutateAsync(toPayload(form));
+      await createMutation.mutateAsync(toBody(form));
       setForm(EMPTY);
     } catch (err) {
-      setError(err.message);
+      setError(describeApiError(err));
     }
   }
 
@@ -192,7 +382,7 @@ export default function Offers() {
     try {
       await deleteMutation.mutateAsync(draftId);
     } catch (err) {
-      setError(err.message);
+      setError(describeApiError(err));
     }
   }
 
@@ -201,7 +391,7 @@ export default function Offers() {
     try {
       await publishMutation.mutateAsync(draft._id);
     } catch (err) {
-      setError(err.message);
+      setError(describeApiError(err));
     }
   }
 
@@ -211,12 +401,12 @@ export default function Offers() {
     if (problem) { setError(problem); return; }
     setError("");
     try {
-      const res = await createMutation.mutateAsync(toPayload(form));
+      const res = await createMutation.mutateAsync(toBody(form));
       const created = res.data?.data?.discount;
       if (created?._id) await publishMutation.mutateAsync(created._id);
       setForm(EMPTY);
     } catch (err) {
-      setError(err.message);
+      setError(describeApiError(err));
     }
   }
 
@@ -226,6 +416,7 @@ export default function Offers() {
       ...EMPTY,
       name:          offer.offerName ?? "",
       code:          offer.code ?? "",
+      imageUrl:      offer.image ?? "",
       type:          offer.code ? "coupon" : "auto",
       discountType:  offer.type ?? "percentage",
       discountValue: String(offer.percentage ?? offer.flatAmount ?? ""),
@@ -233,8 +424,8 @@ export default function Offers() {
       minOrder:      offer.minimumOrderValue ? String(offer.minimumOrderValue) : "",
       applicableFor: offer.applicableTo ?? "both",
       tableNumbers:  (offer.applicableTableNumbers ?? []).join(", "),
-      validFrom:     offer.startDate ? offer.startDate.slice(0, 10) : "",
-      validTo:       offer.endDate ? offer.endDate.slice(0, 10) : "",
+      validFrom:     toDateInput(offer.startDate),
+      validTo:       toDateInput(offer.endDate),
     };
   }
 
@@ -249,12 +440,14 @@ export default function Offers() {
   }
 
   async function saveEdit() {
+    const problem = validate(editForm);
+    if (problem) { setError(problem); return; }
     setError("");
     try {
-      await updateMutation.mutateAsync({ dId: editingOffer._id, body: toPayload(editForm) });
+      await updateMutation.mutateAsync({ dId: editingOffer._id, body: toBody(editForm) });
       cancelEdit();
     } catch (err) {
-      setError(err.message);
+      setError(describeApiError(err));
     }
   }
 
@@ -360,6 +553,18 @@ export default function Offers() {
                 type="date"
                 value={editForm.validTo}
                 onChange={(e) => setEF({ validTo: e.target.value })}
+              />
+            </div>
+
+            {/* Offer Image — full width */}
+            <div className="col-span-full space-y-1.5">
+              <label className="text-sm font-medium text-[#24190f]">Offer Image</label>
+              <ImageDropzone
+                preview={editImagePreview || editForm.imageUrl}
+                hasFile={!!editForm.image}
+                onSelect={(file) => setEF({ image: file })}
+                onClear={() => setEF({ image: null })}
+                onError={setError}
               />
             </div>
 
@@ -472,11 +677,13 @@ export default function Offers() {
 
               <div className="space-y-1.5">
                 <Label>Offer Image</Label>
-                <label className="flex h-28 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-center text-muted-foreground hover:border-brand-orange/50">
-                  <ImagePlus className="h-5 w-5" />
-                  <span className="text-sm">Click to upload or drag and drop</span>
-                  <span className="text-xs">PNG, JPG up to 2MB</span>
-                </label>
+                <ImageDropzone
+                  preview={formImagePreview || form.imageUrl}
+                  hasFile={!!form.image}
+                  onSelect={(file) => set({ image: file })}
+                  onClear={() => set({ image: null })}
+                  onError={setError}
+                />
               </div>
 
               <div className="space-y-1.5">
@@ -690,9 +897,17 @@ export default function Offers() {
             <CardContent className="space-y-5">
               {/* Real-time form preview */}
               <div className="overflow-hidden rounded-2xl border border-dashed border-brand-orange/50">
-                <div className="grid h-32 place-items-center bg-gradient-to-br from-brand-saffron to-brand-red text-white">
-                  <ImagePlus className="h-7 w-7 opacity-80" />
-                </div>
+                {formImagePreview || form.imageUrl ? (
+                  <img
+                    src={formImagePreview || form.imageUrl}
+                    alt="Offer artwork"
+                    className="h-32 w-full object-cover"
+                  />
+                ) : (
+                  <div className="grid h-32 place-items-center bg-gradient-to-br from-brand-saffron to-brand-red text-white">
+                    <ImagePlus className="h-7 w-7 opacity-80" />
+                  </div>
+                )}
                 <div className="space-y-2 p-4">
                   <p className="text-lg font-extrabold uppercase text-brand-red">
                     {form.name || "Your offer title"}

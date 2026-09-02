@@ -27,6 +27,27 @@ export const ownerApi = {
   getDelivery:    (rId)       => client.get(`/owner/${rId}/settings/delivery`),
   updateDelivery: (rId, body) => client.patch(`/owner/${rId}/settings/delivery`, body),
 
+  // ── Compliance documents (allowed at any approvalStatus) ─────────
+  // The scans behind the licence numbers above. Admin reviews each one and marks it
+  // verified or rejected; a rejected one is fixed by uploading again, which resets it
+  // to pending. Uploaded one at a time: multipart with the file under `document` and
+  // the document's `type` alongside it. JPEG/PNG/WebP/PDF, 5 MB max.
+  getDocuments: (rId) => client.get(`/owner/${rId}/documents`),
+  uploadDocument: (rId, type, file) => {
+    const fd = new FormData();
+    fd.append("type", type);
+    fd.append("document", file);
+    return client.post(`/owner/${rId}/documents`, fd);
+  },
+  deleteDocument: (rId, docId) => client.delete(`/owner/${rId}/documents/${docId}`),
+  // The document's bytes, streamed through the API with their real content type. The
+  // stored Cloudinary URL is deliberately not linkable — see the server's
+  // services/restaurantDocument.service.js.
+  getDocumentFile: (rId, docId) =>
+    client
+      .get(`/owner/${rId}/documents/${docId}/file`, { responseType: "blob" })
+      .then((r) => r.data),
+
   // ── Dashboard ────────────────────────────────────────────────────
   // period: "today" | "week" | "month" | "year"
   getDashboardKPIs: (rId, period = "today") =>
@@ -90,6 +111,8 @@ export const ownerApi = {
   // ── Discounts ────────────────────────────────────────────────────
   // Created as `draft`; must be published to become `active`.
   // type: "percentage" | "flat_amount" | "free_item" | "tablewise"
+  // create/update take a plain object, or a FormData when the offer image rides along
+  // (axios sets the multipart boundary itself — never set Content-Type by hand).
   listDiscounts:   (rId)            => client.get(`/owner/${rId}/discounts`),
   createDiscount:  (rId, body)      => client.post(`/owner/${rId}/discounts`, body),
   updateDiscount:  (rId, dId, body) => client.patch(`/owner/${rId}/discounts/${dId}`, body),

@@ -1,8 +1,14 @@
-// The status strip an unapproved owner sees on every screen they *can* reach
-// (/store-settings, /profile) and at the top of the locked screen. Renders
-// nothing once the restaurant is active, so it can be dropped in unconditionally.
+// The approval status strip. Shown on every screen an unapproved owner can still
+// reach (/store-settings, /profile) and at the top of the locked screen — and, once
+// the restaurant is active, as a one-line "Approved" confirmation instead. It used
+// to render nothing at all in that state, which left an approved owner with no
+// indication anywhere that the review had actually gone their way.
+//
+// Pass `quiet` on screens where the approved case is noise (the confirmation is
+// already carried by something else nearby) to keep the old render-nothing
+// behaviour for active restaurants.
 
-import { AlertTriangle, Clock, Lock } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Lock } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { approvalCopy } from "@/lib/approval";
@@ -15,11 +21,31 @@ const TONE = {
   muted:  { wrap: "border-gray-200 bg-gray-50",    icon: "text-gray-500" },
 };
 
-export default function ApprovalNotice({ className }) {
+export default function ApprovalNotice({ className, quiet = false }) {
   const { isApproved, approvalStatus, restaurant } = useOwnerAuth();
-  if (isApproved) return null;
-
   const copy = approvalCopy(approvalStatus);
+
+  // Approved: a single line, not the full explainer block the locked states need.
+  if (isApproved) {
+    if (quiet) return null;
+    return (
+      <div
+        className={cn(
+          "flex items-center gap-2.5 rounded-xl border border-[#BFE3CB] bg-[#F1F9F3] px-4 py-2.5",
+          className,
+        )}
+      >
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-[#2E7D32]" />
+        <p className="text-sm font-semibold text-[#2E7D32]">
+          {copy.title}
+          <span className="ml-2 rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+            {copy.badge}
+          </span>
+        </p>
+      </div>
+    );
+  }
+
   const tone = TONE[copy.tone] ?? TONE.warn;
   const Icon = approvalStatus === "pending" ? Clock : approvalStatus ? Lock : AlertTriangle;
 

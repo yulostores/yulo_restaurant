@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChefHat, Trash2, UtensilsCrossed, UserPlus } from "lucide-react";
+import { Check, ChefHat, Copy, KeyRound, Trash2, UtensilsCrossed, UserPlus, X } from "lucide-react";
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { useStaff, useCreateStaff, useRemoveStaff, useUpdateStaff } from "@/hooks/owner/useStaff";
 import { errorMessage, isNotApprovedError } from "@/lib/errors";
@@ -50,6 +50,10 @@ export default function StaffManagement() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [actionError, setActionError] = useState("");
+  // The one moment the PIN is knowable in plain text — it is argon2-hashed on the
+  // server and never comes back. Held in memory only, and only until the owner
+  // dismisses the handover card.
+  const [issued, setIssued] = useState(null);
 
   const canManage = isApproved && !!restaurantId;
 
@@ -65,12 +69,15 @@ export default function StaffManagement() {
       return;
     }
     try {
-      await createMutation.mutateAsync({
+      const { data } = await createMutation.mutateAsync({
         name:  form.name.trim(),
         role:  form.role,
         pin:   form.pin,
         email: form.email.trim() || undefined,
       });
+      // staffCode is assigned server-side (W01, C02…), so it can only be read back
+      // off the response — the owner has to see it to pass it on.
+      setIssued({ ...data.data.staff, pin: form.pin });
       setForm(EMPTY_FORM);
     } catch (err) {
       setFormError(errorMessage(err, "Couldn't add this staff member. Please try again."));
@@ -116,7 +123,12 @@ export default function StaffManagement() {
       <div>
         <h1 className="text-2xl font-bold">Staff Management</h1>
         <p className="text-sm text-muted-foreground">
-          Add chefs and waiters. They sign in with their own PIN — no email or password needed.
+          Add chefs and waiters. Each one gets an auto-assigned staff code and the PIN you
+          set — that pair is what they use at{" "}
+          <a href="/staff/login" className="font-semibold text-primary hover:underline">
+            /staff/login
+          </a>
+          . No email or password needed.
         </p>
       </div>
 
@@ -226,6 +238,8 @@ export default function StaffManagement() {
         </CardContent>
       </Card>
 
+      {issued && <CredentialsHandover issued={issued} onDismiss={() => setIssued(null)} />}
+
       {actionError ? (
         <p className="rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{actionError}</p>
       ) : null}
@@ -299,6 +313,9 @@ function StaffCard({ member, onToggle, onRemove, updatePending, removePending })
         {member.email && (
           <p className="truncate text-xs text-muted-foreground">{member.email}</p>
         )}
+        {/* The staff code is half of this member's login. It lives only here, so
+            the card has to be able to hand it over. */}
+        {member.staffCode && <CopyableCode value={member.staffCode} />}
         <div className="mt-2 flex items-center gap-2">
           <RoleBadge role={member.role} />
           <Badge variant={member.isActive ? "ok" : "muted"}>
@@ -321,6 +338,100 @@ function StaffCard({ member, onToggle, onRemove, updatePending, removePending })
           className="rounded-lg border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
         >
           <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Clipboard writes need a secure context and can be blocked outright; the code is
+// still selectable text either way, so a failure just leaves the button idle.
+function useCopy() {
+  const [copied, setCopied] = useState(false);
+  const copy = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* no clipboard permission — the owner can select the text manually */
+    }
+  };
+  return { copied, copy };
+}
+
+function CopyableCode({ value }) {
+  const { copied, copy } = useCopy();
+  return (
+    <button
+      type="button"
+      onClick={() => copy(value)}
+      title="Copy staff code"
+      className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-muted px-2 py-1 font-mono text-xs font-semibold tracking-widest transition hover:bg-brand-cream2"
+    >
+      {value}
+      {copied ? (
+        <Check className="h-3 w-3 text-brand-green" />
+      ) : (
+        <Copy className="h-3 w-3 text-muted-foreground" />
+      )}
+    </button>
+  );
+}
+
+// Shown once, straight after a staff member is created. The PIN is argon2-hashed on
+// the server and is never readable again, and the staff code is only assigned at that
+// moment — so this is the single point at which the owner can write both down.
+function CredentialsHandover({ issued, onDismiss }) {
+  const { copied, copy } = useCopy();
+  const summary = `${issued.name} — staff code ${issued.staffCode}, PIN ${issued.pin}`;
+
+  return (
+    <div className="rounded-2xl border border-brand-green/30 bg-[#F1F8F2] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-brand-green/15">
+            <KeyRound className="h-4 w-4 text-brand-green" />
+          </span>
+          <div>
+            <p className="text-sm font-bold text-[#1B5E20]">
+              {issued.name} can now sign in
+            </p>
+            <p className="mt-0.5 text-xs text-[#3f6b42]">
+              Give them these two. The PIN can&apos;t be shown again — you can only replace it.
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="shrink-0 rounded-full p-1 text-[#3f6b42] transition hover:bg-brand-green/10"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="rounded-xl border border-brand-green/25 bg-white px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Staff code
+          </p>
+          <p className="font-mono text-base font-bold tracking-widest">{issued.staffCode}</p>
+        </div>
+        <div className="rounded-xl border border-brand-green/25 bg-white px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            PIN
+          </p>
+          <p className="font-mono text-base font-bold tracking-widest">{issued.pin}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => copy(summary)}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-brand-green/30 px-3 py-2 text-xs font-semibold text-[#1B5E20] transition hover:bg-brand-green/10"
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? "Copied" : "Copy both"}
         </button>
       </div>
     </div>

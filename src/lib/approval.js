@@ -12,6 +12,17 @@
 // those routes have no server-side approval check.
 
 export const APPROVAL_COPY = {
+  // The approved state. Unlike the others this locks nothing — it exists so the
+  // portal can *say* the restaurant is approved instead of showing nothing at all,
+  // which read as "the status never loaded" rather than "you're live".
+  active: {
+    badge: "Approved",
+    tone: "ok",
+    title: "Your restaurant is approved and live",
+    body:
+      "A Yulo admin approved this restaurant. Staff, menu, table QR codes, offers and orders are all unlocked.",
+    cta: "Review store details",
+  },
   // No restaurant document at all: the owner signed up but never applied.
   none: {
     badge: "Not submitted",
@@ -59,6 +70,15 @@ export const APPROVAL_COPY = {
 export function approvalCopy(approvalStatus) {
   if (!approvalStatus) return APPROVAL_COPY.none;
   return APPROVAL_COPY[approvalStatus] ?? APPROVAL_COPY.pending;
+}
+
+// Badge label + <Badge variant> for any approval state, including `active`. The
+// `tone` values above are named after the Badge variants (ui/badge.jsx) so the
+// two stay in step — a status shown as a locked banner on one screen and a chip
+// on another should not disagree about its colour.
+export function approvalBadge(approvalStatus) {
+  const copy = approvalCopy(approvalStatus);
+  return { label: copy.badge, variant: copy.tone };
 }
 
 // Screens an owner can always reach — they are how an unapproved owner submits

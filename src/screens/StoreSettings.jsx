@@ -7,6 +7,11 @@
 //   PATCH /owner/:rId/settings           multipart — profile, brand images, compliance
 //   PATCH /owner/:rId/settings/hours     { operatingHours: [{ day, isOpen, openTime, closeTime }] }
 //   PATCH /owner/:rId/settings/delivery  { radiusKm, baseCharge, freeThreshold, estimatedMinutes }
+//
+// Compliance *documents* are the exception: they upload one at a time the moment a file is
+// picked (POST /owner/:rId/documents), not on save. A scan is not a form field — holding it
+// hostage to the sticky save bar would mean an owner who uploads six files and navigates
+// away has uploaded nothing, and each one carries its own review state coming back.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -26,6 +31,7 @@ import { ownerApi } from "@/api/owner.api";
 import { catalogApi } from "@/api/catalog.api";
 import DashboardLayout from "@/components/DashboardLayout";
 import ApprovalNotice from "@/components/ApprovalNotice";
+import ComplianceDocuments from "@/components/ComplianceDocuments";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -692,7 +698,7 @@ export default function StoreSettings() {
           </p>
         </div>
 
-        {/* Renders nothing once the restaurant is approved. */}
+        {/* Locked states explain themselves here; an approved one confirms itself. */}
         <ApprovalNotice className="mb-5" />
 
         {/* Restaurant info + brand assets */}
@@ -1069,6 +1075,9 @@ export default function StoreSettings() {
             </CardContent>
           </Card>
         </div>
+
+        {/* The scans behind the numbers above — uploaded individually, reviewed individually. */}
+        <ComplianceDocuments restaurantId={restaurantId} className="mt-5" />
       </div>
 
       {/* Sticky action bar */}

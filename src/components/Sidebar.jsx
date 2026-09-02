@@ -14,6 +14,7 @@ import {
   UserRound,
   Users,
   Lock,
+  CheckCircle2,
   X,
 } from "lucide-react";
 
@@ -152,7 +153,17 @@ export default function Sidebar({ isOpen, onClose }) {
             </button>
           </div>
 
-          {!isApproved ? (
+          {/* The approval state is on screen either way: locked owners get the
+              explainer, approved ones a one-line confirmation. Showing nothing at
+              all once approved left the status invisible everywhere in the portal. */}
+          {isApproved ? (
+            <div className="mx-4 mb-4 flex items-center gap-1.5 rounded-lg border border-[#6FBF87]/30 bg-[#6FBF87]/10 px-3 py-2">
+              <CheckCircle2 className="h-3 w-3 shrink-0 text-[#9BE0AF]" />
+              <p className="text-[11px] font-bold uppercase tracking-wide text-[#9BE0AF]">
+                Approved
+              </p>
+            </div>
+          ) : (
             <div className="mx-4 mb-4 rounded-lg border border-brand-cream/20 bg-brand-cream/10 px-3 py-2.5">
               <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-brand-cream/90">
                 <Lock className="h-3 w-3" />
@@ -164,7 +175,7 @@ export default function Sidebar({ isOpen, onClose }) {
                   : "Add your restaurant in Store Settings to send it for admin review."}
               </p>
             </div>
-          ) : null}
+          )}
 
           <nav className="flex flex-col gap-4 px-4 pb-6">
             {NAV_SECTIONS.map((section) => (

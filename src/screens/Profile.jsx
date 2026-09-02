@@ -18,11 +18,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImageUp, Store } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
+import { approvalBadge } from "@/lib/approval";
 import { useSettings } from "@/hooks/owner/useSettings";
 import { userApi, buildProfileFormData } from "@/api/user.api";
 import DashboardLayout from "@/components/DashboardLayout";
 import ApprovalNotice from "@/components/ApprovalNotice";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -171,8 +173,8 @@ export default function Profile() {
 
   return (
     <DashboardLayout>
-      {/* Renders nothing once the restaurant is approved. */}
-      <ApprovalNotice />
+      {/* Locked states explain themselves here; an approved one confirms itself. */}
+      <ApprovalNotice className="mb-5" />
       <form onSubmit={handleSave} className="flex flex-col gap-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -305,12 +307,20 @@ export default function Profile() {
                     <Store className="h-5 w-5 text-muted-foreground" />
                   )}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="font-bold">{restaurant.name || "—"}</p>
-                  <p className="text-sm capitalize text-muted-foreground">
-                    {(restaurant.approvalStatus ?? "").replace("_", " ") || "—"}
-                    {restaurant.address?.city ? ` · ${restaurant.address.city}` : ""}
-                  </p>
+                  {/* The approval state as a chip rather than grey lowercase body
+                      text, which read as a category label, not a verdict. */}
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <Badge variant={approvalBadge(restaurant.approvalStatus).variant}>
+                      {approvalBadge(restaurant.approvalStatus).label}
+                    </Badge>
+                    {restaurant.address?.city ? (
+                      <span className="text-sm text-muted-foreground">
+                        {restaurant.address.city}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             ) : (
