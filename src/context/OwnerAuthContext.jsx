@@ -5,7 +5,7 @@ import {
   setAccessToken,
   getAccessToken,
   refreshSession,
-  isAuthFailure,
+  onSessionEnded,
 } from "@/api/client";
 
 // Owner auth uses the owner-only endpoints: POST /api/owner/auth/{signup,login,logout}.
@@ -51,6 +51,23 @@ export function OwnerAuthProvider({ children }) {
     else localStorage.removeItem(PROFILE_KEY);
   }, [user]);
 
+  // Ends the local session without calling POST /owner/auth/logout — the server has
+  // already rejected the refresh cookie, so there is nothing left to revoke.
+  const endSession = useCallback(() => {
+    setAccessToken("owner", null);
+    setUser(null);
+    setRestaurant(null);
+    setRestaurantsLoaded(true);
+    setLoading(false);
+  }, []);
+
+  // A session can also end mid-visit: the refresh cookie expires after 7 days
+  // (JWT_REFRESH_EXPIRES) wherever the owner happens to be. The client tells us the
+  // moment a refresh comes back 401, so the owner lands on the login screen instead of
+  // watching every panel fail and being told to reload — the reload being what would
+  // otherwise appear to sign them out.
+  useEffect(() => onSessionEnded("owner", endSession), [endSession]);
+
   // On mount: profile exists but the in-memory token is gone (page refresh) —
   // silently mint a new access token from the refresh cookie.
   //
@@ -68,13 +85,11 @@ export function OwnerAuthProvider({ children }) {
 
     let cancelled = false;
     refreshSession("owner")
-      .catch((err) => {
-        if (cancelled || !isAuthFailure(err)) return;
-        setUser(null);
-        setRestaurant(null);
-        localStorage.removeItem(PROFILE_KEY);
-        localStorage.removeItem(RESTAURANT_KEY);
-      })
+      // Nothing to handle here any more: a 401 has already reached endSession through
+      // the broadcast above, and every other failure (429, 5xx, a dropped connection)
+      // leaves the cookie valid — the screens' next request carries no token, gets a
+      // 401 UNAUTHORIZED, and the client interceptor refreshes and replays it.
+      .catch(() => {})
       .finally(() => {
         if (!cancelled) setLoading(false);
       });

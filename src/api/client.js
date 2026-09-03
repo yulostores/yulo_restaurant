@@ -123,8 +123,10 @@ async function attemptRefresh(portal, attempt = 0) {
       await new Promise((r) => setTimeout(r, 300 * 2 ** attempt));
       return attemptRefresh(portal, attempt + 1);
     }
-    if (isAuthFailure(err)) setAccessToken(portal, null);
-    else {
+    if (isAuthFailure(err)) {
+      setAccessToken(portal, null);
+      for (const handler of _sessionEndedHandlers[portal]) handler();
+    } else {
       _lastError[portal] = err;
       _blockedUntil[portal] = Date.now() + COOLDOWN_MS;
     }
@@ -140,6 +142,28 @@ async function attemptRefresh(portal, attempt = 0) {
 // will very likely succeed, so callers must NOT tear the session down for those.
 export function isAuthFailure(err) {
   return err?.status === 401;
+}
+
+// ── Session-ended notification ──────────────────────────────────────────────
+// A refresh answering 401 means that portal's session is genuinely over — the
+// cookie is gone, expired or rejected — and no later request can heal it.
+//
+// The auth providers used to learn this only from their own mount-time refresh,
+// so a session that ended mid-visit left the portal mounted and looking signed
+// in while every screen failed in its own words ("Could not load your documents.
+// Refresh the page to try again.") — and the reload each of them invites is what
+// finally signs the owner out, which reads as the reload having caused it. The
+// providers subscribe here instead, so the session ends where it actually ended.
+const _sessionEndedHandlers = {
+  owner: new Set(),
+  customer: new Set(),
+  admin: new Set(),
+};
+
+export function onSessionEnded(portal, handler) {
+  const handlers = _sessionEndedHandlers[assertPortal(portal)];
+  handlers.add(handler);
+  return () => handlers.delete(handler);
 }
 
 // ── Response interceptor — auto-refresh for owner/customer/admin tokens ─────
