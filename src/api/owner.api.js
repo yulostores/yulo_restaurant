@@ -134,4 +134,11 @@ export const ownerApi = {
   getLiveVisitors:   (rId)       => client.get(`/owner/${rId}/live-monitor/visitors`),
   getLiveRepeat:     (rId)       => client.get(`/owner/${rId}/live-monitor/repeat`),
   createTargetOffer: (rId, body) => client.post(`/owner/${rId}/live-monitor/offer`, body),
+
+  // ── Customer Requests (manager view — runs on the owner session) ──
+  // status: "pending" | "acknowledged" | "resolved"; omit to get all.
+  listRequests:        (rId, status) =>
+    client.get(`/owner/${rId}/requests`, { params: status ? { status } : {} }),
+  updateRequestStatus: (rId, requestId, status) =>
+    client.patch(`/owner/${rId}/requests/${requestId}`, { status }),
 };

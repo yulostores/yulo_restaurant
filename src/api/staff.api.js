@@ -82,4 +82,13 @@ export const staffApi = {
       { paymentMethod },
       S,
     ),
+
+  // ── Customer Requests (role: waiter) ──────────────────────────────
+  // status: "pending" | "acknowledged" | "resolved"; omit to get all.
+  listRequests: (restaurantId, status) =>
+    client.get(`/staff/${restaurantId}/requests`, { ...S, params: status ? { status } : {} }),
+
+  // Allowed transitions: pending -> acknowledged | resolved; acknowledged -> resolved.
+  updateRequestStatus: (restaurantId, requestId, status) =>
+    client.patch(`/staff/${restaurantId}/requests/${requestId}`, { status }, S),
 };

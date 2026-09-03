@@ -22,6 +22,16 @@ export const customerApi = {
   getReviews: (restaurantId, params = {}) =>
     client.get(`/restaurants/${restaurantId}/reviews`, { params }),
 
+  // ── Assistance Requests (call waiter, need water, need the bill, …) ─
+  // Never gated behind the OTP login ordering requires — raised straight off the
+  // table scanned via the QR (session.tableId). type: "call_waiter" | "water" | "bill" | "other"
+  createRequest: (restaurantId, { type, note, tableId }) =>
+    client.post(`/restaurants/${restaurantId}/requests`, { type, note, tableId }),
+
+  // "Mine" here means "this table's" — there's no per-guest account requirement.
+  listMyRequests: (restaurantId, tableId) =>
+    client.get(`/restaurants/${restaurantId}/requests`, { params: { tableId } }),
+
   // ── Customer Orders ───────────────────────────────────────────────
   // NOTE: the documented POST /api/orders only accepts type "delivery" and
   // requires a deliveryAddress. There is no customer-initiated dine-in order

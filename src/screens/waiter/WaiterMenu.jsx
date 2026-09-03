@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Send, UtensilsCrossed } from "lucide-react";
+import { Search, Send, UserRound, UtensilsCrossed } from "lucide-react";
 
 import { useStaffAuth } from "@/context/StaffAuthContext";
 import { useCreateOrder, useWaiterMenu } from "@/hooks/staff/useWaiter";
@@ -251,7 +251,10 @@ export default function WaiterMenu() {
     return allItems.filter((item) => {
       const inCategory    = !activeCategory || item.category === activeCategory;
       const matchesType   = matchesFoodFilter(item, foodFilter);
-      const matchesSearch = !term || item.name.toLowerCase().includes(term) || item.description.toLowerCase().includes(term);
+      const matchesSearch =
+        !term ||
+        item.name.toLowerCase().includes(term) ||
+        (item.description ?? "").toLowerCase().includes(term);
       return inCategory && matchesType && matchesSearch;
     });
   }, [allItems, activeCategory, foodFilter, search]);
