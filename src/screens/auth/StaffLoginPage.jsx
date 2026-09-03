@@ -654,8 +654,12 @@ export default function StaffLoginPage() {
   const from = location.state?.from;
 
   // Already signed in (a bookmarked /staff/login, or a second tab) — the form
-  // would only be a dead end.
+  // would only be a dead end. The ref keeps this off the path of a sign-in that
+  // just happened here: handleSubmit may be sending them somewhere more specific
+  // than the role home, and this must not overwrite that choice.
+  const signedInHere = useRef(false);
   useEffect(() => {
+    if (signedInHere.current) return;
     if (ready && staff) navigate(homeRouteForRole(staff.role), { replace: true });
   }, [ready, staff, navigate]);
 
@@ -670,12 +674,14 @@ export default function StaffLoginPage() {
     setError("");
     setLoading(true);
     try {
+      signedInHere.current = true;
       const profile = await login({ restaurantId: restaurant._id, staffCode, pin });
       rememberLast(restaurant, profile.staffCode);
       const home = homeRouteForRole(profile.role);
       const target = from && from.startsWith(home) ? from : home;
       navigate(target, { replace: true });
     } catch (err) {
+      signedInHere.current = false;
       setError(loginErrorMessage(err));
       setPin("");
       setLoading(false);

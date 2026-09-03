@@ -108,19 +108,24 @@ which lists bills and opens one by `?billId=`.
 
 ---
 
-### 1.6 Restaurant search by name
-`GET /api/restaurants` supports `lat`, `lng`, `radius`, `cuisine`, `page`,
-`limit` — but no text search. Staff need to find their restaurant by name at
-sign-in.
+### 1.6 Restaurant search by name — ~~gap~~ **closed**
+Staff need to find their restaurant by name at sign-in, and
+`GET /api/restaurants` only ever offered `lat`/`lng`/`radius`/`cuisine`/`page`/
+`limit`. The old login screen pulled one page of restaurants and filtered
+client-side, which silently broke past the first 50 stores.
+
+Now served by a purpose-built endpoint:
 
 ```
-GET /api/restaurants?search=<name>
+GET /api/staff/auth/restaurants?q=<name>&lat=<lat>&lng=<lng>
 ```
 
-Worked around in
-[src/screens/auth/StaffLoginPage.jsx](src/screens/auth/StaffLoginPage.jsx),
-which pulls a page of restaurants and filters client-side. This breaks past the
-first 50 restaurants.
+Public, capped at 8 rows, and narrowly projected (name, logo, city, cuisines).
+With coordinates the name match runs inside a `$geoNear` stage, so suggestions
+come back nearest-first with a `distanceKm` on each row — one typed character is
+usually enough to surface the branch the staff member is standing in. Without
+coordinates it falls back to prefix-then-alphabetical ranking. Used by
+[src/hooks/staff/useRestaurantPicker.js](src/hooks/staff/useRestaurantPicker.js).
 
 ---
 
@@ -261,10 +266,14 @@ Orders carry no payment state; a bill is closed with the waiter's
 `mark-paid` call. So per-order "Bill Requested" / "Paid" filters (in the original
 designs) cannot exist. Order filters now use the documented order lifecycle.
 
-### 3.3 Staff cannot read their own restaurant's profile
+### 3.3 Staff cannot read their own restaurant's profile — *narrowed*
 Staff screens need the restaurant name for the header, but
-`/api/owner/:rId/settings` needs an owner token. Worked around by calling the
-public `GET /api/restaurants/:id`.
+`/api/owner/:rId/settings` needs an owner token.
+
+`POST /api/staff/auth/login` and `GET /api/staff/auth/me` now return
+`restaurantName` and `restaurantLogo` alongside the staff member, which covers
+every header on the staff screens. Anything richer (address, hours, contact)
+still has no staff-scoped read:
 
 ```
 GET /api/staff/:restaurantId/restaurant
@@ -301,7 +310,7 @@ These were mismatches between the old frontend and API.md, now fixed:
 | `POST /auth/signup` with `role: "restaurant_owner"` | `POST /owner/auth/signup` |
 | `POST /auth/login` for owners | `POST /owner/auth/login` |
 | `POST /auth/signup` with `role: "customer"` | `POST /auth/signup` (no role field) |
-| Staff login sent `{ restaurantId, staffCode, pin }` | `{ restaurantId, pin }` |
+| Staff login sent `{ restaurantId, pin }`, and read `{ staff, staffToken }` the server never sent | `{ restaurantId, staffCode, pin }` → `{ staffToken, staff }`; the code is required because a `staffCode` is unique only within one restaurant |
 | Kitchen status sent `{ newStatus }` | `{ currentStatus, newStatus }` + 409 retry |
 | Kitchen board read `{ preparing, ready, completed }` | `{ placed, confirmed, preparing, ready }` |
 | Waiter scan sent `{ qrPayload }` | `{ qrToken }` (the tableId from the QR URL) |
