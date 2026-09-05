@@ -79,6 +79,23 @@ export function useMarkPaid(restaurantId) {
   });
 }
 
+// ── Move a ticket along — the waiter's own status transition ─────────
+// newStatus: "confirmed" | "preparing" | "ready" | "served". "served" is the
+// step only the floor can report; the server enforces the same transition
+// table the chef KDS uses.
+export function useUpdateOrderStatus(restaurantId) {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ orderId, newStatus }) =>
+      staffApi.waiterUpdateOrderStatus(restaurantId, orderId, newStatus),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: waiterKeys.sessions(restaurantId) });
+      qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
+    },
+  });
+}
+
 // ── Scan a table QR — qrToken is the tableId from the QR URL ─────────
 export function useScanTable(restaurantId) {
   const qc = useQueryClient();

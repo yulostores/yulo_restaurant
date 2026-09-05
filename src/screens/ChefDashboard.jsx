@@ -11,8 +11,9 @@ import { cn } from "@/lib/utils";
    Server fields (API.md § Kitchen): _id, type, status, batchNumber,
    tableSessionId, items[{ menuItemId, name, quantity, price }],
    subtotal, specialInstructions, createdAt.
-   Dine-in orders belong to a table SESSION — the raw table number is not on
-   the order, so the batch number identifies the ticket on the pass.
+   Dine-in orders now carry their own `tableNumber` (and the server resolves it for
+   older orders — see services/orderView.service.js), so a ticket names the table it is
+   going to. The batch/round number distinguishes repeat rounds from the same table.
 */
 function normalizeOrder(o) {
   return {
@@ -20,6 +21,8 @@ function normalizeOrder(o) {
     number:       String(o._id).slice(-5).toUpperCase(),
     batchNumber:  o.batchNumber ?? null,
     sessionId:    o.tableSessionId ? String(o.tableSessionId) : null,
+    tableNumber:  o.tableNumber ?? null,
+    staffName:    o.staff?.name ?? null,
     orderType:    o.type ?? "dine_in",
     items:        (o.items ?? []).map((i) => ({ ...i, title: i.name })),
     status:       o.status,
@@ -38,9 +41,15 @@ function waitingMinutes(order) {
 
 function orderLabel(order) {
   if (order.orderType === "delivery") return "Delivery";
+  if (order.tableNumber) {
+    const base = `Table ${order.tableNumber}`;
+    const round = order.batchNumber ? ` · Round ${order.batchNumber}` : "";
+    return order.staffName ? `${base}${round} · ${order.staffName}` : `${base}${round}`;
+  }
+  // No table resolved (a deleted table, or an order from before tableNumber existed).
   if (order.sessionId) {
     const short = order.sessionId.slice(-4).toUpperCase();
-    return order.batchNumber ? `Session ${short} · Batch ${order.batchNumber}` : `Session ${short}`;
+    return order.batchNumber ? `Session ${short} · Round ${order.batchNumber}` : `Session ${short}`;
   }
   return "Dine-in";
 }
@@ -156,7 +165,8 @@ function OrderDetailsDrawer({ order, onClose, onMarkReady }) {
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
           {batches.map((batch, bIdx) => {
             const isLast = bIdx === batches.length - 1;
-            const batchDone = !isLast || status === "ready" || status === "delivered";
+            const batchDone =
+              !isLast || status === "ready" || status === "served" || status === "delivered";
             return (
               <div key={bIdx}>
                 <div className="mb-3 flex items-center justify-between">
@@ -315,10 +325,14 @@ function BoardCard({ order, column, onAction, onViewDetails }) {
           <button
             type="button"
             disabled={busy}
-            onClick={() => act("delivered")}
+            onClick={() => act(order.orderType === "dine_in" ? "served" : "delivered")}
             className="w-full rounded-xl border border-emerald-300 bg-emerald-50 py-2.5 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
           >
-            {busy ? "Updating…" : "Handed Over"}
+            {busy
+              ? "Updating…"
+              : order.orderType === "dine_in"
+                ? "Handed to Waiter"
+                : "Handed Over"}
           </button>
           <button type="button" onClick={() => onViewDetails(order)} className="flex w-full items-center justify-center gap-1.5 py-1 text-sm text-muted-foreground hover:text-[#24190f]">
             <Eye className="h-3.5 w-3.5" /> View Details

@@ -20,6 +20,9 @@ import {
 import { useLiveStats } from "@/hooks/owner/useLiveMonitor";
 import { useSettings } from "@/hooks/owner/useSettings";
 import DashboardLayout from "@/components/DashboardLayout";
+import OrderDetailsDialog, {
+  formatPrice, orderCode, placedByLabel, statusLabel, statusVariant,
+} from "@/components/OrderDetailsDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -45,21 +48,6 @@ const BREAKDOWN_COLORS = {
   Delivery:    "#F2A65A",
   Cancelled:   "#B11226",
 };
-
-function statusVariant(status) {
-  const key = (status ?? "").toLowerCase();
-  if (key === "delivered") return "ok";
-  if (key === "ready") return "info";
-  if (key === "preparing" || key === "out_for_delivery") return "warn";
-  if (key === "cancelled") return "danger";
-  return "muted";
-}
-
-function formatPrice(value) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency", currency: "INR", maximumFractionDigits: 0,
-  }).format(Number(value) || 0);
-}
 
 function PeriodDropdown({ value, onChange }) {
   const active = PERIODS.find((p) => p.value === value);
@@ -116,6 +104,7 @@ export default function OwnerDashboard() {
   const navigate = useNavigate();
   const { restaurantId, approvalStatus } = useOwnerAuth();
 
+  const [detailOrder, setDetail]      = useState(null);
   const [kpiPeriod, setKpiPeriod]     = useState("today");
   const [salesPeriod, setSalesPeriod] = useState("week");
   const [hovered, setHovered]         = useState(null);
@@ -337,7 +326,9 @@ export default function OwnerDashboard() {
             <h2 className="flex items-center gap-2 text-base font-bold">
               <Flame className="h-4 w-4 text-brand-orange" /> Live Kitchen Activity
             </h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">The 10 most recent orders</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              The 10 most recent orders &mdash; click one for its full detail
+            </p>
           </div>
           <button
             type="button"
@@ -353,8 +344,10 @@ export default function OwnerDashboard() {
               <TableHeader>
                 <TableRow className="border-brand-cream/60">
                   <TableHead>Order</TableHead>
+                  <TableHead>Table</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Items</TableHead>
+                  <TableHead>Taken by</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Time</TableHead>
                   <TableHead className="text-right">Subtotal</TableHead>
@@ -363,32 +356,49 @@ export default function OwnerDashboard() {
               <TableBody>
                 {ordersLoading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="animate-pulse py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={8} className="animate-pulse py-8 text-center text-sm text-muted-foreground">
                       Loading orders…
                     </TableCell>
                   </TableRow>
                 ) : recentOrders.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
                       No recent orders.
                     </TableCell>
                   </TableRow>
                 ) : (
                   recentOrders.map((o) => (
-                    <TableRow key={o._id}>
+                    <TableRow
+                      key={o._id}
+                      onClick={() => setDetail(o)}
+                      className="cursor-pointer"
+                    >
                       <TableCell className="font-semibold">
-                        #{String(o._id).slice(-6).toUpperCase()}
+                        {orderCode(o)}
+                        {o.batchNumber > 1 ? (
+                          <span className="block text-xs font-normal text-muted-foreground">
+                            Round {o.batchNumber}
+                          </span>
+                        ) : null}
+                      </TableCell>
+                      <TableCell>
+                        {o.tableNumber ? (
+                          <span className="font-medium">Table {o.tableNumber}</span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="capitalize text-muted-foreground">
                         {(o.type ?? "").replace("_", " ") || "—"}
                       </TableCell>
-                      <TableCell className="max-w-[260px] truncate">
+                      <TableCell className="max-w-[220px] truncate">
                         {(o.items ?? []).map((i) => `${i.quantity}× ${i.name}`).join(", ") || "—"}
                       </TableCell>
+                      <TableCell className="max-w-[150px] truncate text-muted-foreground">
+                        {placedByLabel(o)}
+                      </TableCell>
                       <TableCell>
-                        <Badge variant={statusVariant(o.status)} className="capitalize">
-                          {(o.status ?? "").replace(/_/g, " ")}
-                        </Badge>
+                        <Badge variant={statusVariant(o.status)}>{statusLabel(o.status)}</Badge>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {o.createdAt
@@ -406,6 +416,8 @@ export default function OwnerDashboard() {
           </div>
         </CardContent>
       </Card>
+
+      <OrderDetailsDialog order={detailOrder} onClose={() => setDetail(null)} />
 
       {/* Top selling */}
       <Card>

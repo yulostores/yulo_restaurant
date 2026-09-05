@@ -1,13 +1,19 @@
 // Waiter · Active Orders — GET /api/staff/:rId/waiter/sessions, grouped by table.
 //
-// Read-only on status: the API routes order transitions through the chef KDS
-// endpoints (role: chef), so a waiter token cannot mark a ticket served.
-// See API-GAPS.md.
+// The floor owns the last step of a ticket's life: the kitchen can say a dish is ready,
+// but only the person who carried it knows it reached the table. That's the "Mark served"
+// button here, which PATCHes /waiter/orders/:orderId/status and is reflected immediately
+// in the owner portal's Manage Orders and dashboard feed.
+//
+// Where the kitchen isn't running the KDS at all, the same endpoint also lets the waiter
+// walk a ticket forward through confirmed/preparing/ready — the server enforces the same
+// transition table either way, so nothing can jump backwards.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 
 import { useStaffAuth } from "@/context/StaffAuthContext";
-import { useWaiterSessions, useWaiterTables } from "@/hooks/staff/useWaiter";
+import { useUpdateOrderStatus, useWaiterSessions, useWaiterTables } from "@/hooks/staff/useWaiter";
 import { cn } from "@/lib/utils";
 import WaiterLayout, { WaiterPageHeader, formatPrice } from "./WaiterLayout";
 
@@ -16,13 +22,25 @@ const STATUS_TONE = {
   confirmed:        "bg-[#E7F0FB] text-[#1565C0]",
   preparing:        "bg-[#FFF3E0] text-[#D9480F]",
   ready:            "bg-[#E8F5EC] text-brand-green",
+  served:           "bg-[#E8F5EC] text-[#2E7D32]",
   out_for_delivery: "bg-[#FFF3E0] text-[#D9480F]",
   delivered:        "bg-[#F3F4F6] text-[#5F5F5F]",
   cancelled:        "bg-[#FCE9E4] text-brand-maroon",
 };
 
+const STATUS_LABEL = {
+  placed: "Placed",
+  confirmed: "Confirmed",
+  preparing: "Preparing",
+  ready: "Ready",
+  served: "Served",
+  out_for_delivery: "Out for delivery",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+};
+
 // The furthest-behind ticket sets the table's headline status.
-const STATUS_RANK = ["placed", "confirmed", "preparing", "ready", "delivered"];
+const STATUS_RANK = ["placed", "confirmed", "preparing", "ready", "served", "delivered"];
 
 function tableStatus(orders = []) {
   const live = orders.filter((o) => o.status !== "cancelled");
@@ -30,8 +48,92 @@ function tableStatus(orders = []) {
   return live.reduce((worst, o) => {
     const a = STATUS_RANK.indexOf(worst);
     const b = STATUS_RANK.indexOf(o.status);
-    return b >= 0 && b < a ? o.status : worst;
-  }, "delivered");
+    return b >= 0 && (a < 0 || b < a) ? o.status : worst;
+  }, live[0].status);
+}
+
+// The single next step this waiter can take on a ticket. Anything already served, out for
+// delivery or closed has no floor action left, so no button is offered rather than one
+// that would only ever fail.
+function nextAction(order) {
+  switch (order.status) {
+    case "placed":    return { newStatus: "confirmed", label: "Confirm" };
+    case "confirmed": return { newStatus: "preparing", label: "Start prep" };
+    case "preparing": return { newStatus: "served",    label: "Mark served" };
+    case "ready":     return { newStatus: "served",    label: "Mark served" };
+    default:          return null;
+  }
+}
+
+function formatTime(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function StatusPill({ status }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-full px-3 py-1 text-xs font-bold",
+        STATUS_TONE[status] ?? "bg-[#F3F4F6] text-[#5F5F5F]",
+      )}
+    >
+      {STATUS_LABEL[status] ?? String(status ?? "").replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function RoundRow({ order, onAdvance, pending }) {
+  const action = nextAction(order);
+  const items = order.items ?? [];
+  const qty = items.reduce((n, i) => n + (i.quantity ?? 0), 0);
+
+  return (
+    <div className="border-t border-brand-cream/60 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-bold">
+            Round {order.round ?? order.batchNumber ?? "—"}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              {formatTime(order.createdAt)} · {qty} {qty === 1 ? "item" : "items"}
+            </span>
+          </p>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {items.map((i) => `${i.quantity}× ${i.name}`).join(", ") || "No items"}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Taken by{" "}
+            {order.staff?.name ??
+              (order.placedBy === "guest" ? "the guest (table QR)" : "the customer app")}
+          </p>
+          {order.specialInstructions ? (
+            <p className="mt-1 text-xs italic text-muted-foreground">
+              “{order.specialInstructions}”
+            </p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <StatusPill status={order.status} />
+          <span className="text-sm font-bold text-brand-red">{formatPrice(order.subtotal)}</span>
+        </div>
+      </div>
+
+      {action ? (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => onAdvance(order, action.newStatus)}
+          className={cn(
+            "mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white transition",
+            pending ? "bg-brand-orange/60" : "bg-brand-gradient hover:opacity-90",
+          )}
+        >
+          {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {action.label}
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 export default function WaiterOrders() {
@@ -40,7 +142,14 @@ export default function WaiterOrders() {
 
   const { data: sessions = [], isLoading, isError, error } = useWaiterSessions(restaurantId);
   const { data: tables = [] } = useWaiterTables(restaurantId);
+  const advance = useUpdateOrderStatus(restaurantId);
 
+  const [openTables, setOpenTables] = useState({});
+  const [pendingOrderId, setPendingOrderId] = useState(null);
+  const [actionError, setActionError] = useState(null);
+
+  // The sessions endpoint now returns `tableNumber` directly; the tables query is the
+  // fallback for a server that hasn't been redeployed yet.
   const tableLabelById = useMemo(
     () => Object.fromEntries(tables.map((t) => [t._id, t.identifier])),
     [tables],
@@ -50,16 +159,12 @@ export default function WaiterOrders() {
     () =>
       sessions.map((s) => {
         const orders = s.orders ?? [];
-        const allItems = orders.flatMap((o) => o.items ?? []);
         return {
           id: s._id,
-          label: tableLabelById[s.tableId] ?? "Table",
+          label: s.tableNumber ?? tableLabelById[s.tableId] ?? "—",
           status: tableStatus(orders),
-          summary: allItems
-            .slice(0, 4)
-            .map((i) => `${i.quantity}× ${i.name}`)
-            .join(", "),
-          extra: Math.max(0, allItems.length - 4),
+          orders,
+          guestCount: s.guestCount,
           batches: s.batchCount ?? orders.length,
           total: s.runningTotal ?? 0,
         };
@@ -67,16 +172,31 @@ export default function WaiterOrders() {
     [sessions, tableLabelById],
   );
 
+  async function handleAdvance(order, newStatus) {
+    setActionError(null);
+    setPendingOrderId(order._id);
+    try {
+      await advance.mutateAsync({ orderId: order._id, newStatus });
+    } catch (err) {
+      setActionError(err?.message ?? "Could not update this order — please try again.");
+    } finally {
+      setPendingOrderId(null);
+    }
+  }
+
   return (
     <WaiterLayout>
       <WaiterPageHeader
         title="Active Orders"
-        subtitle="Live tickets per table. The kitchen moves them through their statuses."
+        subtitle="Live tickets per table. Mark each round served once it reaches the table."
       />
 
       <div className="px-4 py-5 sm:px-5">
         {isError ? (
           <p className="mb-4 text-sm text-brand-maroon">Failed to load orders: {error.message}</p>
+        ) : null}
+        {actionError ? (
+          <p className="mb-4 text-sm text-brand-maroon">{actionError}</p>
         ) : null}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -87,36 +207,61 @@ export default function WaiterOrders() {
               No open tables right now.
             </div>
           ) : (
-            rows.map((row) => (
-              <div
-                key={row.id}
-                className="rounded-2xl border border-brand-cream/60 bg-white p-5 shadow-sm"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-lg font-bold">Table {row.label}</span>
-                  <span
-                    className={cn(
-                      "rounded-full px-3 py-1 text-xs font-bold capitalize",
-                      STATUS_TONE[row.status] ?? "bg-[#F3F4F6] text-[#5F5F5F]",
-                    )}
+            rows.map((row) => {
+              const open = Boolean(openTables[row.id]);
+              return (
+                <div
+                  key={row.id}
+                  className="overflow-hidden rounded-2xl border border-brand-cream/60 bg-white shadow-sm"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setOpenTables((t) => ({ ...t, [row.id]: !t[row.id] }))}
+                    className="w-full p-5 text-left"
+                    aria-expanded={open}
                   >
-                    {row.status.replace(/_/g, " ")}
-                  </span>
-                </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-lg font-bold">Table {row.label}</span>
+                      <div className="flex items-center gap-2">
+                        <StatusPill status={row.status} />
+                        {open ? (
+                          <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </div>
+                    </div>
 
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {row.summary || "No items yet"}
-                  {row.extra > 0 ? ` +${row.extra} more` : ""}
-                </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {row.orders
+                        .flatMap((o) => o.items ?? [])
+                        .slice(0, 4)
+                        .map((i) => `${i.quantity}× ${i.name}`)
+                        .join(", ") || "No items yet"}
+                    </p>
 
-                <div className="mt-4 flex items-center justify-between border-t border-brand-cream/60 pt-3">
-                  <span className="text-xs text-muted-foreground">
-                    {row.batches} {row.batches === 1 ? "batch" : "batches"}
-                  </span>
-                  <span className="font-bold text-brand-red">{formatPrice(row.total)}</span>
+                    <div className="mt-4 flex items-center justify-between border-t border-brand-cream/60 pt-3">
+                      <span className="text-xs text-muted-foreground">
+                        {row.batches} {row.batches === 1 ? "round" : "rounds"}
+                        {row.guestCount ? ` · ${row.guestCount} guests` : ""}
+                      </span>
+                      <span className="font-bold text-brand-red">{formatPrice(row.total)}</span>
+                    </div>
+                  </button>
+
+                  {open
+                    ? row.orders.map((order) => (
+                        <RoundRow
+                          key={order._id}
+                          order={order}
+                          onAdvance={handleAdvance}
+                          pending={pendingOrderId === order._id}
+                        />
+                      ))
+                    : null}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

@@ -8,17 +8,35 @@ import { cn } from "@/lib/utils";
 import { useCustomerOrder } from "@/hooks/customer/useCustomerOrders";
 import CustomerLayout, { formatPrice } from "./CustomerLayout";
 
-// Terminal states stop the poll.
-const DONE = ["delivered", "cancelled"];
+// Terminal states stop the poll. 'served' is the dine-in end of the line — the waiter
+// has brought the food to the table — and nothing follows it until the bill is settled.
+const DONE = ["served", "delivered", "cancelled"];
 
-const STEPS = [
-  { key: "placed",           label: "Order placed",   note: "We've received your order." },
-  { key: "confirmed",        label: "Confirmed",      note: "The restaurant accepted it." },
-  { key: "preparing",        label: "Preparing",      note: "Your food is being cooked." },
-  { key: "ready",            label: "Ready",          note: "Packed and ready to go." },
-  { key: "out_for_delivery", label: "Out for delivery", note: "On the way to you." },
-  { key: "delivered",        label: "Delivered",      note: "Enjoy your meal!" },
+// A dine-in order ends at 'served'; a delivery one runs on through dispatch. Both share
+// the first four steps, so the tail is chosen per order type rather than showing a diner
+// a delivery step that will never happen.
+const COMMON_STEPS = [
+  { key: "placed",    label: "Order placed", note: "We've received your order." },
+  { key: "confirmed", label: "Confirmed",    note: "The restaurant accepted it." },
+  { key: "preparing", label: "Preparing",    note: "Your food is being cooked." },
 ];
+
+const DINE_IN_STEPS = [
+  ...COMMON_STEPS,
+  { key: "ready",  label: "Ready",  note: "Plated and on its way to your table." },
+  { key: "served", label: "Served", note: "Enjoy your meal!" },
+];
+
+const DELIVERY_STEPS = [
+  ...COMMON_STEPS,
+  { key: "ready",            label: "Ready",            note: "Packed and ready to go." },
+  { key: "out_for_delivery", label: "Out for delivery", note: "On the way to you." },
+  { key: "delivered",        label: "Delivered",        note: "Enjoy your meal!" },
+];
+
+function stepsFor(order) {
+  return order?.type === "dine_in" ? DINE_IN_STEPS : DELIVERY_STEPS;
+}
 
 export default function OrderStatus() {
   const { orderId } = useParams();
@@ -46,7 +64,8 @@ export default function OrderStatus() {
   }
 
   const cancelled = order.status === "cancelled";
-  const currentIndex = STEPS.findIndex((s) => s.key === order.status);
+  const steps = stepsFor(order);
+  const currentIndex = steps.findIndex((s) => s.key === order.status);
   const settled = DONE.includes(order.status);
 
   return (
@@ -86,10 +105,10 @@ export default function OrderStatus() {
         ) : (
           <section className="rounded-2xl border border-brand-cream/70 bg-white p-4">
             <ol className="space-y-0">
-              {STEPS.map((step, i) => {
+              {steps.map((step, i) => {
                 const done = currentIndex >= 0 && i <= currentIndex;
                 const active = i === currentIndex;
-                const last = i === STEPS.length - 1;
+                const last = i === steps.length - 1;
                 return (
                   <li key={step.key} className="flex gap-3">
                     <div className="flex flex-col items-center">

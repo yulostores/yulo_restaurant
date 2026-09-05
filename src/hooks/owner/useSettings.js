@@ -6,7 +6,24 @@ export const settingsKeys = {
   main:     (rId) => ["settings", rId, "main"],
   hours:    (rId) => ["settings", rId, "hours"],
   delivery: (rId) => ["settings", rId, "delivery"],
+  // Not restaurant-scoped — the contract is the same for every store, and the create
+  // step needs it before a restaurant id exists.
+  requirements: () => ["settings", "requirements"],
 };
+
+// GET /owner/settings-requirements — which fields the form shows, which of them are
+// mandatory, and the rules each value must satisfy. The screen renders its labels,
+// required markers, dropdown options and input limits from this rather than holding its
+// own copy, so the client and PATCH /settings can't drift apart on what a valid store
+// profile is. It changes only when the server does, hence the long staleTime.
+export function useSettingsRequirements() {
+  return useQuery({
+    queryKey: settingsKeys.requirements(),
+    queryFn: () =>
+      ownerApi.getSettingsRequirements().then((r) => r.data.data.requirements),
+    staleTime: 60 * 60_000,
+  });
+}
 
 // GET /owner/:rId/settings — the restaurant record (name, logo, banner, …)
 export function useSettings(restaurantId) {

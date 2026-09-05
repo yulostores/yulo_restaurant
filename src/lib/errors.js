@@ -18,6 +18,19 @@ const FRIENDLY = {
   VALIDATION_ERROR: null, // keep the server's field-level message
 };
 
+// Codes whose server copy is kept even though they answer 5xx.
+//
+// The document endpoints are the one place a 5xx is routine rather than alarming —
+// storage can be slow, or an asset from an old backup can be gone — and the server
+// already phrases those cases for owners ("please try again in a moment", "please upload
+// it again"). Without this they would be swallowed by the blanket "the server is having
+// trouble" line, which is true but tells the owner nothing to do next.
+const TRUSTED_5XX_CODES = new Set([
+  "UPLOAD_FAILED",
+  "DOCUMENT_UNAVAILABLE",
+  "DOCUMENT_MISSING",
+]);
+
 export function isApiError(err) {
   return !!(err && (err.code || err.status));
 }
@@ -30,7 +43,9 @@ export function isApiError(err) {
 export function errorMessage(err, fallback = "Something went wrong. Please try again.") {
   if (!isApiError(err)) return fallback;
   if (err.code && err.code in FRIENDLY && FRIENDLY[err.code]) return FRIENDLY[err.code];
-  if (err.status >= 500) return "The server is having trouble right now. Please try again.";
+  if (err.status >= 500 && !TRUSTED_5XX_CODES.has(err.code)) {
+    return "The server is having trouble right now. Please try again.";
+  }
   return err.message || fallback;
 }
 

@@ -213,8 +213,8 @@ reads owner-scoped endpoints. Consequences:
 |---|---|---|
 | Dashboard | `/owner/:rId/dashboard`, `/owner/:rId/orders` | Kitchen queue derived from the order list; the chef KDS needs a staff token |
 | Live Monitoring | `/owner/:rId/live-monitor/*` | — |
-| Orders | `/owner/:rId/orders` | Read-only (see 3.1) |
-| Tables | `/owner/:rId/tables` | No floor status or waiter assignment (see 2.1) |
+| Orders | `/owner/:rId/orders`, `/orders/by-table` | Read-only on status (see 3.1) |
+| Tables | `/owner/:rId/tables` | No order-independent floor status (see 2.1) |
 | Requests | — | Blocked (see 1.1) |
 
 To make this a real portal:
@@ -224,13 +224,23 @@ POST /api/manager/auth/login
 GET  /api/manager/:restaurantId/...      — or extend staff roles with "manager"
 ```
 
-### 2.1 Table floor state
-The tables API models `identifier`, `capacity`, `isActive` and the QR state.
-The floor-management design needs live status and staffing:
+### 2.1 Table floor state — *narrowed*
+The tables API models `identifier`, `capacity`, `isActive` and the QR state, with
+no persistent floor status or staffing field.
+
+Orders themselves no longer have this gap: every order carries its `tableId`,
+`tableNumber`, `staffId`/`placedBy` and `statusHistory`, and
+`GET /api/owner/:restaurantId/orders/by-table` returns tables with their open
+sitting, its assigned waiter, its rounds and a derived headline status. That covers
+"which table is waiting on what, and who is looking after it".
+
+What is still missing is table state independent of orders — `cleaning`,
+`available`, a reservation hold — and an explicit waiter-to-table assignment that
+survives when no session is open:
 
 ```
 PATCH /api/owner/:restaurantId/tables/:tableId
-      { status: available|occupied|preparing|served|cleaning, assignedWaiterId }
+      { status: available|occupied|cleaning, assignedWaiterId }
 ```
 
 ### 2.2 Kitchen alerts
@@ -248,16 +258,20 @@ PATCH /api/staff/:restaurantId/kitchen/alerts/:id
 
 ## 3. Worked around — permission mismatches
 
-### 3.1 Nobody but a chef can move an order
+### 3.1 Nobody but a chef can move an order — *narrowed*
 `PATCH /api/staff/:restaurantId/kitchen/orders/:orderId/status` requires role
-`chef`. That means:
+`chef`. The waiter half of this is now solved:
 
-- **Waiters cannot mark an order served or delivered.** The waiter dashboard and
-  orders screen are now read-only on status.
-- **Owners and managers cannot intervene** on a stuck ticket.
+- **Waiters can mark an order served.** `PATCH
+  /api/staff/:restaurantId/waiter/orders/:orderId/status` accepts `confirmed`,
+  `preparing`, `ready` and `served` on a waiter token, enforcing the same
+  transition table as the KDS. `served` is the dine-in terminal state — the food
+  reaching the table — and is recorded on the order's `statusHistory` against the
+  waiter's name, so the owner portal shows who marked it and when.
+- **Owners and managers still cannot intervene** on a stuck ticket. Both order
+  screens remain read-only on status.
 
 ```
-— allow role `waiter` to set ready → delivered
 — add an owner-scoped status override
 ```
 

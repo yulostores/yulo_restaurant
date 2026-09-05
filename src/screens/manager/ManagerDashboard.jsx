@@ -5,11 +5,14 @@
 // owner session and reads the owner-scoped dashboard + orders endpoints.
 // See API-GAPS.md.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Flame, Star } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
+import OrderDetailsDialog, {
+  orderCode, placedByLabel, statusLabel, statusVariant,
+} from "@/components/OrderDetailsDialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
@@ -35,7 +38,8 @@ const BREAKDOWN_COLORS = {
   Cancelled:   "#B3261E",
 };
 
-// Kitchen pipeline buckets, derived from the order status the API returns.
+// Kitchen pipeline buckets — the statuses that still need someone to act. This is also
+// what defines the queue table below, which is why 'served' isn't in it.
 const KITCHEN_BUCKETS = [
   { key: "placed",    label: "New",       tag: "QUEUED" },
   { key: "confirmed", label: "Confirmed", tag: "ACCEPTED" },
@@ -43,15 +47,9 @@ const KITCHEN_BUCKETS = [
   { key: "ready",     label: "Ready",     tag: "TO SERVE" },
 ];
 
-function statusVariant(status = "") {
-  const key = String(status).toLowerCase();
-  if (key.includes("delivered")) return "ok";
-  if (key.includes("ready")) return "info";
-  if (key.includes("prepar") || key.includes("out_for")) return "warn";
-  if (key.includes("placed") || key.includes("confirmed")) return "muted";
-  if (key.includes("cancel")) return "danger";
-  return "muted";
-}
+// Counted alongside them but deliberately outside the queue: a served round has reached
+// the table and needs nothing further, so it belongs in the tally, not the work list.
+const SERVED_BUCKET = { key: "served", label: "Served", tag: "AT TABLE" };
 
 function formatTime(value) {
   if (!value) return "—";
@@ -99,6 +97,7 @@ export default function ManagerDashboard() {
   // Live kitchen view: the owner token can't call the chef KDS endpoints, so the
   // queue is derived from the owner's own order list.
   const { data: liveOrders = [] } = useOwnerOrders(restaurantId, { limit: 50 });
+  const [detailOrder, setDetail] = useState(null);
 
   const breakdown = useMemo(() => {
     if (!kpis) return { total: 0, segments: [] };
@@ -119,7 +118,9 @@ export default function ManagerDashboard() {
   }, [kpis]);
 
   const buckets = useMemo(() => {
-    const counts = Object.fromEntries(KITCHEN_BUCKETS.map((b) => [b.key, 0]));
+    const counts = Object.fromEntries(
+      [...KITCHEN_BUCKETS, SERVED_BUCKET].map((b) => [b.key, 0]),
+    );
     for (const o of liveOrders) {
       if (counts[o.status] !== undefined) counts[o.status] += 1;
     }
@@ -240,8 +241,8 @@ export default function ManagerDashboard() {
           </p>
         </CardHeader>
         <CardContent>
-          <div className="mb-5 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-            {KITCHEN_BUCKETS.map((bucket) => (
+          <div className="mb-5 grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
+            {[...KITCHEN_BUCKETS, SERVED_BUCKET].map((bucket) => (
               <div
                 key={bucket.key}
                 className="rounded-xl border border-brand-cream/60 bg-[#fffaf7] p-3.5"
@@ -263,26 +264,39 @@ export default function ManagerDashboard() {
               <TableHeader>
                 <TableRow className="border-brand-cream/60">
                   <TableHead>Order</TableHead>
+                  <TableHead>Table</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Items</TableHead>
+                  <TableHead>Taken by</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Placed</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {queue.map((o) => (
-                  <TableRow key={o._id}>
-                    <TableCell className="font-semibold">
-                      #{String(o._id).slice(-6).toUpperCase()}
+                  <TableRow key={o._id} onClick={() => setDetail(o)} className="cursor-pointer">
+                    <TableCell className="font-semibold">{orderCode(o)}</TableCell>
+                    <TableCell>
+                      {o.tableNumber ? (
+                        <span className="font-medium">Table {o.tableNumber}</span>
+                      ) : (
+                        <span className="text-muted-foreground">&mdash;</span>
+                      )}
+                      {o.batchNumber > 1 ? (
+                        <span className="block text-xs text-muted-foreground">
+                          Round {o.batchNumber}
+                        </span>
+                      ) : null}
                     </TableCell>
                     <TableCell className="capitalize text-muted-foreground">
                       {(o.type ?? "").replace("_", " ") || "—"}
                     </TableCell>
-                    <TableCell className="max-w-[280px] truncate">{itemSummary(o)}</TableCell>
+                    <TableCell className="max-w-[220px] truncate">{itemSummary(o)}</TableCell>
+                    <TableCell className="max-w-[150px] truncate text-muted-foreground">
+                      {placedByLabel(o)}
+                    </TableCell>
                     <TableCell>
-                      <Badge variant={statusVariant(o.status)} className="capitalize">
-                        {o.status}
-                      </Badge>
+                      <Badge variant={statusVariant(o.status)}>{statusLabel(o.status)}</Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatTime(o.createdAt)}
@@ -291,7 +305,7 @@ export default function ManagerDashboard() {
                 ))}
                 {queue.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                       Kitchen queue is clear.
                     </TableCell>
                   </TableRow>
@@ -338,15 +352,21 @@ export default function ManagerDashboard() {
           </CardHeader>
           <CardContent>
             {recentOrders.map((order) => (
-              <div
+              <button
+                type="button"
                 key={order._id}
-                className="flex items-center justify-between gap-3 border-b border-[#F6EFE9] py-3.5 last:border-0"
+                onClick={() => setDetail(order)}
+                className="flex w-full items-center justify-between gap-3 border-b border-[#F6EFE9] py-3.5 text-left last:border-0 hover:bg-brand-cream/20"
               >
                 <div className="flex min-w-0 flex-col gap-1">
-                  <div className="flex items-center gap-2.5">
-                    <span className="font-semibold">
-                      #{String(order._id).slice(-6).toUpperCase()}
-                    </span>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="font-semibold">{orderCode(order)}</span>
+                    {order.tableNumber ? (
+                      <span className="rounded-full bg-brand-cream/50 px-2 py-0.5 text-[11px] font-bold text-[#5a403e]">
+                        Table {order.tableNumber}
+                        {order.batchNumber > 1 ? " \u00b7 R" + order.batchNumber : ""}
+                      </span>
+                    ) : null}
                     <span className="text-xs text-muted-foreground">
                       {formatTime(order.createdAt)}
                     </span>
@@ -354,11 +374,14 @@ export default function ManagerDashboard() {
                   <span className="truncate text-xs text-muted-foreground">
                     {itemSummary(order)}
                   </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {placedByLabel(order)}
+                  </span>
                 </div>
-                <Badge variant={statusVariant(order.status)} className="shrink-0 capitalize">
-                  {order.status}
+                <Badge variant={statusVariant(order.status)} className="shrink-0">
+                  {statusLabel(order.status)}
                 </Badge>
-              </div>
+              </button>
             ))}
             {recentOrders.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">No orders yet.</p>
@@ -366,6 +389,8 @@ export default function ManagerDashboard() {
           </CardContent>
         </Card>
       </section>
+
+      <OrderDetailsDialog order={detailOrder} onClose={() => setDetail(null)} />
     </DashboardLayout>
   );
 }

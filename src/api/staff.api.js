@@ -68,7 +68,15 @@ export const staffApi = {
       headers: { "Idempotency-Key": idempotencyKey() },
     }),
 
-  // Open table sessions with their orders and a runningTotal.
+  // Waiter-driven status change. The waiter owns the "served" step — the food
+  // reaching the table — which the chef KDS has no way to know about. Allowed:
+  // confirmed | preparing | ready | served, and the server still enforces the
+  // same transition table the KDS uses, so a step can never be skipped backwards.
+  waiterUpdateOrderStatus: (restaurantId, orderId, newStatus) =>
+    client.patch(`/staff/${restaurantId}/waiter/orders/${orderId}/status`, { newStatus }, S),
+
+  // Open table sessions with their orders and a runningTotal. Each session also
+  // carries its `tableNumber`, and each order its `round` and `staff`.
   getSessions: (restaurantId) =>
     client.get(`/staff/${restaurantId}/waiter/sessions`, S),
 

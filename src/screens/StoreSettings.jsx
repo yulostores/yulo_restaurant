@@ -2,11 +2,25 @@
 // brand assets, weekly opening hours, delivery logistics, and legal/licensing
 // details with a sticky unsaved-changes action bar (PRD §13.1 OWN-01).
 //
-// Three endpoints back this screen, each with its own record on the Restaurant
-// document, so a save fans out to all three:
+// Four endpoints back this screen. Three of them are writes, each with its own record on
+// the Restaurant document, so a save fans out to all three:
 //   PATCH /owner/:rId/settings           multipart — profile, brand images, compliance
 //   PATCH /owner/:rId/settings/hours     { operatingHours: [{ day, isOpen, openTime, closeTime }] }
 //   PATCH /owner/:rId/settings/delivery  { radiusKm, baseCharge, freeThreshold, estimatedMinutes }
+//
+// The fourth is what the form is *made of*:
+//   GET   /owner/settings-requirements   the field contract — see below
+//
+// Nothing on this screen decides what a field is called, whether it is mandatory, what a
+// valid value looks like, what a dropdown offers, or how big a logo may be. All of it
+// arrives from that endpoint, served by server/config/storeSettings.config.js — the same
+// module PATCH /settings validates against. So the required-field rule is one rule with
+// two enforcement points rather than two rules that drift: the form marks a field with a
+// `*`, refuses to save without it and says why, and the API answers 400 with per-field
+// messages to anyone who tries the same save without the form.
+//
+// Form state is keyed by those same paths (`address.city`, `settings.panNumber`), which is
+// what lets one setter, one validator and one error lookup serve every input here.
 //
 // Compliance *documents* are the exception: they upload one at a time the moment a file is
 // picked (POST /owner/:rId/documents), not on save. A scan is not a form field — holding it
@@ -23,6 +37,7 @@ import {
   useDeliverySettings,
   useHours,
   useSettings,
+  useSettingsRequirements,
   useUpdateDelivery,
   useUpdateHours,
   useUpdateSettings,
@@ -40,32 +55,14 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { hhmmToTime, timeToHhmm } from "@/lib/hours";
 import { useObjectUrl } from "@/lib/useObjectUrl";
-
-// Indian company classifications. This one genuinely is a fixed list — it comes from
-// company law, not from our data — and the server stores it as a free-form string with
-// no catalogue endpoint to read it from.
-const LEGAL_ENTITY_TYPES = [
-  "Sole proprietorship",
-  "Partnership",
-  "Private Limited",
-  "Public Limited",
-  "NGO",
-  "AOP/BOI",
-];
-
-// The order the API's `day` enum uses (models/Restaurant.js), and the order the week is
-// rendered in.
-const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-
-const DEFAULT_OPEN_TIME = 900;   // 09:00
-const DEFAULT_CLOSE_TIME = 2200; // 22:00
-
-// Mirrors uploadFields(['logo','banner'], 5) in middleware/upload.js, so an oversized or
-// wrong-typed pick fails here instead of costing an upload round trip.
-const MAX_BRAND_BYTES = 5 * 1024 * 1024;
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
-
-const EARLIEST_ESTABLISHED_YEAR = 1800; // Restaurant.establishedYear has `min: 1800`
+import {
+  applyInputRules,
+  brandImageError,
+  indexFields,
+  inputId,
+  setByPath,
+  validateFields,
+} from "@/lib/fieldRules";
 
 // `Number(x) || fallback` would turn a deliberate 0 — free delivery, no minimum radius —
 // back into the default, so test for a finite number instead of truthiness.
@@ -82,14 +79,49 @@ function toDateInput(value) {
   return Number.isNaN(d.getTime()) ? "" : d.toISOString().split("T")[0];
 }
 
-function Field({ label, htmlFor, error, children }) {
+// The last segment of a field path — `settings.panNumber` lives at `panNumber` inside the
+// `settings` sub-object, on the form and on the document alike.
+const leaf = (path) => path.split(".").pop();
+
+// The DOM attributes a descriptor implies. Kept here rather than in the descriptor itself
+// because they are this client's rendering concern, not part of the contract.
+function inputAttrs(field) {
+  if (!field) return {};
+  const attrs = { id: inputId(field.path) };
+  if (field.placeholder) attrs.placeholder = field.placeholder;
+  if (["email", "tel", "url", "date", "number"].includes(field.type)) attrs.type = field.type;
+  if (field.type === "number") {
+    if (field.min !== undefined) attrs.min = String(field.min);
+    if (field.max !== undefined) attrs.max = String(field.max);
+    if (field.step !== undefined) attrs.step = String(field.step);
+  }
+  // A digit-filtered field stays a text box with a numeric keypad: <input type="number">
+  // ignores maxLength and its spinner walks straight past the ceiling.
+  if (field.digitsOnly) {
+    if (attrs.type === "number") attrs.type = "text";
+    attrs.inputMode = "numeric";
+  }
+  if (field.maxLength && attrs.type !== "number") attrs.maxLength = field.maxLength;
+  return attrs;
+}
+
+function Field({ label, htmlFor, error, required, children }) {
   return (
     <div className="space-y-1.5">
       <Label htmlFor={htmlFor} className="text-xs uppercase tracking-wide text-brand-red">
         {label}
+        {required && (
+          <span aria-hidden="true" className="ml-0.5 text-brand-maroon">
+            *
+          </span>
+        )}
       </Label>
       {children}
-      {error ? <p className="text-[11px] text-brand-maroon">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-[11px] text-brand-maroon">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -119,10 +151,12 @@ function LockBadge() {
   );
 }
 
-function LegalEntitySelect({ value, onChange }) {
+// Options and the empty-state caption both come from the field descriptor, so the list of
+// legal entity types lives in one place on the server and nowhere here.
+function SelectField({ field, value, onChange, invalid }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
-  const display = value || "Select type";
+  const display = value || field.placeholder || "Select";
 
   useEffect(() => {
     if (!open) return;
@@ -138,30 +172,37 @@ function LegalEntitySelect({ value, onChange }) {
   return (
     <div className="relative" ref={containerRef}>
       <button
+        id={inputId(field.path)}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+        aria-invalid={invalid}
+        className={cn(
+          "flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring",
+          invalid && "border-brand-maroon",
+        )}
       >
-        <span className="font-medium uppercase tracking-wide">{display}</span>
+        <span className={cn("font-medium uppercase tracking-wide", !value && "text-muted-foreground")}>
+          {display}
+        </span>
         <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")} />
       </button>
       {open && (
         <div role="listbox" className="absolute z-20 mt-1 w-full overflow-hidden rounded-xl border border-brand-cream/70 bg-white shadow-lg">
-          {LEGAL_ENTITY_TYPES.map((type) => (
+          {(field.options ?? []).map((option) => (
             <button
-              key={type}
+              key={option}
               type="button"
               role="option"
-              aria-selected={value === type}
-              onClick={() => { onChange(type); setOpen(false); }}
+              aria-selected={value === option}
+              onClick={() => { onChange(option); setOpen(false); }}
               className={cn(
                 "flex w-full items-center px-4 py-2.5 text-sm hover:bg-brand-cream/30",
-                value === type && "font-semibold text-brand-orange",
+                value === option && "font-semibold text-brand-orange",
               )}
             >
-              {type}
+              {option}
             </button>
           ))}
         </div>
@@ -180,7 +221,7 @@ function LegalEntitySelect({ value, onChange }) {
 // and keyboard handling, and anything typed is still accepted. Snapping a typed entry to
 // the known spelling is what keeps the vocabulary from fragmenting — "north indian" is
 // stored the way the rest of the platform spells it rather than becoming a second cuisine.
-function CuisineEditor({ value, onChange }) {
+function CuisineEditor({ field, value, onChange }) {
   const [draft, setDraft] = useState("");
 
   // Suggestions are a nicety, not a dependency: a failed or empty fetch just means an
@@ -230,7 +271,7 @@ function CuisineEditor({ value, onChange }) {
         </div>
       )}
       <Input
-        id="settings-cuisine"
+        id={inputId(field.path)}
         list="cuisine-suggestions"
         autoComplete="off"
         value={draft}
@@ -253,9 +294,10 @@ function CuisineEditor({ value, onChange }) {
   );
 }
 
-// Shared logo/banner picker: validates against the server's own limits, previews the
-// pick, and lets it be cleared again before saving.
-function BrandImagePicker({ label, file, currentUrl, onPick, onError, hint, fit, icon: Icon }) {
+// Shared logo/banner picker: validates against the server's own limits — which the server
+// itself reports (requirements.brandImage) — previews the pick, and lets it be cleared
+// again before saving.
+function BrandImagePicker({ field, limits, file, currentUrl, onPick, onError, fit, icon: Icon }) {
   const preview = useObjectUrl(file);
   const src = preview ?? currentUrl ?? null;
 
@@ -263,12 +305,9 @@ function BrandImagePicker({ label, file, currentUrl, onPick, onError, hint, fit,
     const picked = e.target.files?.[0];
     e.target.value = ""; // let the same file be re-picked after a rejection
     if (!picked) return;
-    if (!ALLOWED_IMAGE_TYPES.includes(picked.type)) {
-      onError(`${label} must be a JPEG, PNG or WebP`);
-      return;
-    }
-    if (picked.size > MAX_BRAND_BYTES) {
-      onError(`${label} must be under 5 MB`);
+    const problem = brandImageError(limits, picked);
+    if (problem) {
+      onError(`${field.label}: ${problem}`);
       return;
     }
     onError(null);
@@ -277,19 +316,19 @@ function BrandImagePicker({ label, file, currentUrl, onPick, onError, hint, fit,
 
   return (
     <div>
-      <Label className="text-xs uppercase tracking-wide text-brand-red">{label}</Label>
+      <Label className="text-xs uppercase tracking-wide text-brand-red">{field.label}</Label>
       <label className="mt-1.5 flex h-24 cursor-pointer flex-col items-center justify-center gap-1 overflow-hidden rounded-xl border-2 border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-muted-foreground hover:border-brand-orange/50">
         {src ? (
-          <img src={src} alt={`${label} preview`} className={cn("h-full w-full", fit)} />
+          <img src={src} alt={`${field.label} preview`} className={cn("h-full w-full", fit)} />
         ) : (
           <>
             <Icon className="h-5 w-5" />
-            <span className="text-xs">{hint}</span>
+            <span className="text-xs">{field.hint}</span>
           </>
         )}
         <input
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept={limits?.accept}
           className="hidden"
           onChange={handlePick}
         />
@@ -310,94 +349,59 @@ function BrandImagePicker({ label, file, currentUrl, onPick, onError, hint, fit,
   );
 }
 
-// Flattens the three server records into the single shape the form edits.
-function seedForm({ restaurant, hours, delivery }) {
+// Flattens the three server records into the single shape the form edits — which is the
+// shape the API expects, addressed by the same paths the field spec uses.
+function seedForm({ restaurant, hours, delivery, spec, hoursConfig }) {
   const hoursMap = Object.fromEntries(
     (hours.length ? hours : restaurant.operatingHours ?? []).map((h) => [h.day, h]),
   );
+  const compliance = [...spec.section("business"), ...spec.section("licenses")];
+
   return {
     name: restaurant.name ?? "",
     description: restaurant.description ?? "",
     cuisineTypes: restaurant.cuisineTypes ?? [],
     // Every address part the settings PATCH accepts, so the city/state/pincode captured at
     // onboarding stay editable — they feed the geocode that puts the restaurant on the map.
-    address: {
-      street: restaurant.address?.street ?? "",
-      city: restaurant.address?.city ?? "",
-      state: restaurant.address?.state ?? "",
-      pincode: restaurant.address?.pincode ?? "",
-    },
+    address: Object.fromEntries(
+      spec.section("profile")
+        .filter((f) => f.path.startsWith("address."))
+        .map((f) => [leaf(f.path), restaurant.address?.[leaf(f.path)] ?? ""]),
+    ),
     email: restaurant.email ?? "",
     phone: restaurant.phone ?? "",
     website: restaurant.website ?? "",
     establishedYear: restaurant.establishedYear != null ? String(restaurant.establishedYear) : "",
-    hours: DAYS.map((day) => ({
+    hours: hoursConfig.days.map((day) => ({
       day,
       isOpen: hoursMap[day]?.isOpen ?? true,
-      open: hhmmToTime(hoursMap[day]?.openTime ?? DEFAULT_OPEN_TIME),
-      close: hhmmToTime(hoursMap[day]?.closeTime ?? DEFAULT_CLOSE_TIME),
+      open: hhmmToTime(hoursMap[day]?.openTime ?? hoursConfig.defaultOpenTime),
+      close: hhmmToTime(hoursMap[day]?.closeTime ?? hoursConfig.defaultCloseTime),
     })),
-    delivery: {
-      radiusKm: String(delivery?.radiusKm ?? restaurant.delivery?.radiusKm ?? ""),
-      baseCharge: String(delivery?.baseCharge ?? restaurant.delivery?.baseCharge ?? ""),
-      freeThreshold: String(delivery?.freeThreshold ?? restaurant.delivery?.freeThreshold ?? ""),
-      estimatedMinutes: String(
-        delivery?.estimatedMinutes ?? restaurant.delivery?.estimatedMinutes ?? "",
-      ),
-    },
-    business: {
-      legalEntityType: restaurant.settings?.legalEntityType ?? "",
-      ownerName: restaurant.settings?.ownerName ?? "",
-      panNumber: restaurant.settings?.panNumber ?? "",
-    },
-    licenses: {
-      gstNumber: restaurant.settings?.gstNumber ?? "",
-      fssai: restaurant.settings?.healthPermitId ?? "",
-      fssaiExpiry: toDateInput(restaurant.settings?.licenseExpiry),
-      tradeLicense: restaurant.settings?.registrationNo ?? "",
-      tradeLicenseExpiry: toDateInput(restaurant.settings?.tradeLicenseExpiry),
-    },
+    delivery: Object.fromEntries(
+      spec.section("delivery").map((f) => {
+        const key = leaf(f.path);
+        const value = delivery?.[key] ?? restaurant.delivery?.[key];
+        return [key, value == null ? "" : String(value)];
+      }),
+    ),
+    settings: Object.fromEntries(
+      compliance.map((f) => {
+        const key = leaf(f.path);
+        const raw = restaurant.settings?.[key];
+        return [key, f.type === "date" ? toDateInput(raw) : raw ?? ""];
+      }),
+    ),
   };
-}
-
-// Everything that must hold before a save is attempted, keyed by the field it belongs to.
-function validate(form) {
-  const errors = {};
-  if (!form.name.trim()) errors.name = "Restaurant name is required";
-
-  if (form.establishedYear) {
-    const year = Number(form.establishedYear);
-    const thisYear = new Date().getFullYear();
-    if (!Number.isInteger(year) || year < EARLIEST_ESTABLISHED_YEAR || year > thisYear) {
-      errors.establishedYear = `Enter a year between ${EARLIEST_ESTABLISHED_YEAR} and ${thisYear}`;
-    }
-  }
-  if (form.email && !/^\S+@\S+\.\S+$/.test(form.email)) {
-    errors.email = "Enter a valid email address";
-  }
-
-  for (const [key, label] of [
-    ["radiusKm", "Radius"],
-    ["baseCharge", "Base charge"],
-    ["freeThreshold", "Free threshold"],
-    ["estimatedMinutes", "Estimated time"],
-  ]) {
-    const raw = form.delivery[key];
-    if (raw === "") continue;
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) errors[key] = `${label} must be zero or more`;
-  }
-
-  // An open day with a blank time would otherwise post 00:00, silently marking the
-  // restaurant open from midnight.
-  if (form.hours.some((h) => h.isOpen && (!h.open || !h.close))) {
-    errors.hours = "Set an opening and closing time for every open day";
-  }
-  return errors;
 }
 
 export default function StoreSettings() {
   const { restaurantId, fetchRestaurants, updateRestaurant } = useOwnerAuth();
+  const {
+    data: requirements,
+    isLoading: reqLoading,
+    isError: reqError,
+  } = useSettingsRequirements();
   const { data: serverSettings, isLoading, isError } = useSettings(restaurantId);
   // Hours and delivery config have their own endpoints.
   const { data: serverHours = [] } = useHours(restaurantId);
@@ -406,10 +410,23 @@ export default function StoreSettings() {
   const updateHoursMutation = useUpdateHours(restaurantId);
   const updateDeliveryMutation = useUpdateDelivery(restaurantId);
 
+  const spec = useMemo(() => indexFields(requirements?.fields ?? []), [requirements]);
+
   const [form, setForm] = useState(null);
   const [original, setOriginal] = useState(null);
   // { tone: "ok" | "error", text }
   const [status, setStatus] = useState(null);
+  // Which fields the owner has actually been through, and whether a save has been
+  // attempted. A brand-new restaurant is missing every mandatory detail by definition —
+  // painting all ten red before it has been touched reads as a broken screen rather than
+  // as guidance — so a message appears once its own field has been edited, and every
+  // outstanding one appears the moment Save is pressed.
+  const [touched, setTouched] = useState({});
+  const [submitted, setSubmitted] = useState(false);
+  // Field errors the API answered with (400 VALIDATION_ERROR → details.fieldErrors),
+  // keyed by the same paths. They matter even when the client thought the form was fine:
+  // the server is the authority, and its reasons belong on the fields they concern.
+  const [serverFieldErrors, setServerFieldErrors] = useState({});
   // Signature of the server payload the form was last seeded from.
   const seededRef = useRef(undefined);
   // Optional brand images uploaded with the next save (PATCH /settings).
@@ -419,9 +436,8 @@ export default function StoreSettings() {
   // create-restaurant form (used when restaurantId is null)
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
-  const [newRestaurant, setNewRestaurant] = useState({
-    name: "", street: "", city: "", state: "", pincode: "",
-  });
+  const [createSubmitted, setCreateSubmitted] = useState(false);
+  const [newRestaurant, setNewRestaurant] = useState({ name: "", address: {} });
 
   const dirty =
     !!logoFile || !!bannerFile || (!!form && !!original && JSON.stringify(form) !== original);
@@ -434,7 +450,7 @@ export default function StoreSettings() {
   // Guarded on `dirty` so a background refetch never overwrites edits in progress: the
   // form yields to the server only when there is nothing unsaved to lose.
   useEffect(() => {
-    if (!serverSettings) return;
+    if (!serverSettings || !requirements) return;
     const signature = JSON.stringify([serverSettings, serverHours, serverDelivery]);
     if (seededRef.current === signature) return;
     if (seededRef.current !== undefined && dirty) return;
@@ -443,28 +459,76 @@ export default function StoreSettings() {
       restaurant: serverSettings,
       hours: serverHours,
       delivery: serverDelivery,
+      spec,
+      hoursConfig: requirements.hours,
     });
     setForm(seeded);
     setOriginal(JSON.stringify(seeded));
-  }, [serverSettings, serverHours, serverDelivery, dirty]);
+  }, [serverSettings, serverHours, serverDelivery, requirements, spec, dirty]);
 
-  const errors = useMemo(() => (form ? validate(form) : {}), [form]);
+  // Every rule in the contract, run against the object that is about to be sent — so what
+  // is validated is exactly what is saved.
+  const errors = useMemo(() => {
+    if (!form || !requirements) return {};
+    const found = validateFields(spec.all, form);
+    // An open day with a blank time would otherwise post 00:00, silently marking the
+    // restaurant open from midnight. Hours are a table, not a field, so this one rule
+    // can't be expressed as a per-field descriptor.
+    if (form.hours.some((h) => h.isOpen && (!h.open || !h.close))) {
+      found.hours = requirements.hours.incompleteMessage;
+    }
+    return found;
+  }, [form, requirements, spec]);
+
   const hasErrors = Object.keys(errors).length > 0;
 
-  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const setIn = (key, patch) => setForm((f) => ({ ...f, [key]: { ...f[key], ...patch } }));
-  const setHour = (day, patch) =>
+  // A message is shown once its field has been touched or a save has been attempted; one
+  // the server sent back is shown regardless, since it can only exist after an attempt.
+  const errorFor = (path) =>
+    (submitted || touched[path] ? errors[path] : undefined) ?? serverFieldErrors[path];
+
+  const setField = (path, value) => {
+    setForm((f) => setByPath(f, path, value));
+    setTouched((t) => (t[path] ? t : { ...t, [path]: true }));
+    // The server's verdict was about the value that has just changed.
+    setServerFieldErrors((e) => (path in e ? { ...e, [path]: undefined } : e));
+  };
+  const onInput = (field) => (e) => setField(field.path, applyInputRules(field, e.target.value));
+
+  const setHour = (day, patch) => {
     setForm((f) => ({
       ...f,
       hours: f.hours.map((h) => (h.day === day ? { ...h, ...patch } : h)),
     }));
+    setTouched((t) => (t.hours ? t : { ...t, hours: true }));
+  };
+
+  // Send the owner to the first thing standing between them and a save, in the order the
+  // fields are laid out — a message under a control three cards down is otherwise easy to
+  // miss on a screen this long.
+  function focusFirstInvalid(paths) {
+    const first = spec.all.map((f) => f.path).find((path) => paths[path]);
+    const el = first ? document.getElementById(inputId(first)) : null;
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.focus({ preventScroll: true });
+    }
+  }
 
   const saving =
     updateMutation.isPending || updateHoursMutation.isPending || updateDeliveryMutation.isPending;
 
   async function save() {
+    setSubmitted(true);
+    setServerFieldErrors({});
+
     if (hasErrors) {
-      setStatus({ tone: "error", text: "Fix the highlighted fields before saving" });
+      const count = Object.keys(errors).length;
+      setStatus({
+        tone: "error",
+        text: `${count} ${count === 1 ? "field needs" : "fields need"} attention before this can be saved`,
+      });
+      focusFirstInvalid(errors);
       return;
     }
     setStatus(null);
@@ -475,6 +539,10 @@ export default function StoreSettings() {
     try {
       // PATCH /settings is multipart/form-data so a logo or banner file can ride along
       // with the JSON fields.
+      //
+      // Empty string, not undefined, for anything the owner cleared: `undefined` is
+      // dropped from the payload and the server skips absent keys, so clearing an
+      // optional field would never take.
       const { data } = await updateMutation.mutateAsync(
         buildSettingsFormData({
           name: form.name.trim(),
@@ -485,20 +553,9 @@ export default function StoreSettings() {
           phone: form.phone.trim(),
           website: form.website.trim(),
           establishedYear: form.establishedYear,
+          settings: form.settings,
           ...(logoFile ? { logo: logoFile } : {}),
           ...(bannerFile ? { banner: bannerFile } : {}),
-          // Empty string, not undefined: `undefined` is dropped from the payload and the
-          // server skips absent keys, so clearing a field would never take.
-          settings: {
-            legalEntityType: form.business.legalEntityType,
-            ownerName: form.business.ownerName,
-            panNumber: form.business.panNumber,
-            gstNumber: form.licenses.gstNumber,
-            healthPermitId: form.licenses.fssai,
-            licenseExpiry: form.licenses.fssaiExpiry,
-            registrationNo: form.licenses.tradeLicense,
-            tradeLicenseExpiry: form.licenses.tradeLicenseExpiry,
-          },
         }),
       );
 
@@ -507,20 +564,19 @@ export default function StoreSettings() {
         form.hours.map((h) => ({
           day: h.day,
           isOpen: h.isOpen,
-          openTime: timeToHhmm(h.open) ?? DEFAULT_OPEN_TIME,
-          closeTime: timeToHhmm(h.close) ?? DEFAULT_CLOSE_TIME,
+          openTime: timeToHhmm(h.open) ?? requirements.hours.defaultOpenTime,
+          closeTime: timeToHhmm(h.close) ?? requirements.hours.defaultCloseTime,
         })),
       );
 
       step = "delivery";
-      await updateDeliveryMutation.mutateAsync({
-        radiusKm: toNumber(form.delivery.radiusKm, undefined),
-        baseCharge: toNumber(form.delivery.baseCharge, undefined),
-        // Cleared on purpose when left blank — the endpoint replaces the whole delivery
-        // object, so an omitted key removes the threshold rather than keeping the old one.
-        freeThreshold: toNumber(form.delivery.freeThreshold, undefined),
-        estimatedMinutes: toNumber(form.delivery.estimatedMinutes, undefined),
-      });
+      await updateDeliveryMutation.mutateAsync(
+        Object.fromEntries(
+          // Cleared on purpose when left blank — the endpoint replaces the whole delivery
+          // object, so an omitted key removes the value rather than keeping the old one.
+          Object.entries(form.delivery).map(([key, value]) => [key, toNumber(value, undefined)]),
+        ),
+      );
 
       // The top bar and /profile read the restaurant from the auth context, which is
       // otherwise only refreshed at login — a rename or a new logo would show stale there.
@@ -530,8 +586,18 @@ export default function StoreSettings() {
       setOriginal(JSON.stringify(form));
       setLogoFile(null);
       setBannerFile(null);
+      setSubmitted(false);
       setStatus({ tone: "ok", text: "All changes saved" });
     } catch (err) {
+      // A 400 from the required-field gate names the fields it refused — put each message
+      // where the owner can act on it rather than only in the status bar.
+      const fieldErrors = err.details?.fieldErrors;
+      if (fieldErrors && Object.keys(fieldErrors).length > 0) {
+        setServerFieldErrors(fieldErrors);
+        setStatus({ tone: "error", text: err.message ?? "Some required details are missing" });
+        focusFirstInvalid(fieldErrors);
+        return;
+      }
       setStatus({ tone: "error", text: `Couldn't save ${step}: ${err.message ?? "request failed"}` });
     }
   }
@@ -540,14 +606,24 @@ export default function StoreSettings() {
     setForm(JSON.parse(original));
     setLogoFile(null);
     setBannerFile(null);
+    setTouched({});
+    setSubmitted(false);
+    setServerFieldErrors({});
     setStatus(null);
   }
 
   // ── No restaurant yet: show create form ──────────────────────────
+  const createFields = spec.onCreate();
+  const createErrors = validateFields(createFields, newRestaurant);
+
   async function handleCreate(e) {
     e.preventDefault();
-    const { name, street, city, state, pincode } = newRestaurant;
-    if (!name.trim() || !street.trim() || !city.trim()) return;
+    setCreateSubmitted(true);
+    if (Object.keys(createErrors).length > 0) {
+      setCreateError("");
+      focusFirstInvalid(createErrors);
+      return;
+    }
     setCreating(true);
     setCreateError("");
     try {
@@ -555,13 +631,10 @@ export default function StoreSettings() {
       // that powers "restaurants near me" (services/geocode.service.js), and answers
       // 400 ADDRESS_NOT_FOUND if the address can't be placed on the map.
       await ownerApi.createRestaurant({
-        name: name.trim(),
-        address: {
-          street: street.trim(),
-          city: city.trim(),
-          state: state.trim(),
-          pincode: pincode.trim(),
-        },
+        name: newRestaurant.name.trim(),
+        address: Object.fromEntries(
+          Object.entries(newRestaurant.address).map(([k, v]) => [k, v.trim()]),
+        ),
       });
       // Deliberately stays on this screen: the restaurant is created with
       // approvalStatus "pending", so /dashboard is locked (ApprovalGate) until
@@ -575,10 +648,30 @@ export default function StoreSettings() {
     }
   }
 
+  // The field contract is what this screen is built from, so there is nothing meaningful
+  // to render — and nothing safe to save — until it has arrived.
+  if (reqError) {
+    return (
+      <DashboardLayout>
+        <p className="text-muted-foreground">
+          Failed to load the store settings form. Refresh the page to try again.
+        </p>
+      </DashboardLayout>
+    );
+  }
+  if (reqLoading || !requirements) {
+    return (
+      <DashboardLayout>
+        <p className="text-muted-foreground">Loading store settings…</p>
+      </DashboardLayout>
+    );
+  }
+
   if (!restaurantId) {
-    const setNew = (patch) => setNewRestaurant((r) => ({ ...r, ...patch }));
-    const canSubmit =
-      newRestaurant.name.trim() && newRestaurant.street.trim() && newRestaurant.city.trim();
+    const setNew = (path, value) => {
+      setNewRestaurant((r) => setByPath(r, path, value));
+      setCreateError("");
+    };
 
     return (
       <DashboardLayout>
@@ -594,57 +687,32 @@ export default function StoreSettings() {
               </p>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleCreate} className="space-y-4">
-                <Field label="Restaurant Name *" htmlFor="new-name">
-                  <Input
-                    id="new-name"
-                    value={newRestaurant.name}
-                    onChange={(e) => setNew({ name: e.target.value })}
-                    placeholder="Your restaurant name"
-                    required
-                  />
-                </Field>
-                <Field label="Street *" htmlFor="new-street">
-                  <Input
-                    id="new-street"
-                    value={newRestaurant.street}
-                    onChange={(e) => setNew({ street: e.target.value })}
-                    placeholder="12 Main Road"
-                    required
-                  />
-                </Field>
-                <Field label="City *" htmlFor="new-city">
-                  <Input
-                    id="new-city"
-                    value={newRestaurant.city}
-                    onChange={(e) => setNew({ city: e.target.value })}
-                    placeholder="Delhi"
-                    required
-                  />
-                </Field>
+              <form onSubmit={handleCreate} noValidate className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="State" htmlFor="new-state">
-                    <Input
-                      id="new-state"
-                      value={newRestaurant.state}
-                      onChange={(e) => setNew({ state: e.target.value })}
-                      placeholder="Delhi"
-                    />
-                  </Field>
-                  <Field label="Pincode" htmlFor="new-pincode">
-                    <Input
-                      id="new-pincode"
-                      value={newRestaurant.pincode}
-                      onChange={(e) => setNew({ pincode: e.target.value.replace(/\D/g, "").slice(0, 6) })}
-                      placeholder="110001"
-                      inputMode="numeric"
-                    />
-                  </Field>
+                  {createFields.map((field) => (
+                    <div key={field.path} className={cn(field.createWide && "col-span-2")}>
+                      <Field
+                        label={field.label}
+                        htmlFor={inputId(field.path)}
+                        required={field.required}
+                        error={createSubmitted ? createErrors[field.path] : undefined}
+                      >
+                        <Input
+                          {...inputAttrs(field)}
+                          value={(field.path.includes(".")
+                            ? newRestaurant.address?.[leaf(field.path)]
+                            : newRestaurant[field.path]) ?? ""}
+                          onChange={(e) => setNew(field.path, applyInputRules(field, e.target.value))}
+                          aria-invalid={createSubmitted && !!createErrors[field.path]}
+                        />
+                      </Field>
+                    </div>
+                  ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   We place your restaurant on the map from this address, so customers
-                  nearby can find you — add the state and pincode for a more accurate
-                  match. Your restaurant goes to the Yulo admin team for review the
+                  nearby can find you — the state and pincode are what make that match
+                  accurate. Your restaurant goes to the Yulo admin team for review the
                   moment you submit — you can keep editing these details while you wait.
                 </p>
                 {createError && (
@@ -652,7 +720,7 @@ export default function StoreSettings() {
                 )}
                 <Button
                   type="submit"
-                  disabled={creating || !canSubmit}
+                  disabled={creating}
                   className="w-full bg-brand-gradient text-white hover:brightness-105"
                 >
                   {creating ? "Submitting…" : "Submit for review"}
@@ -683,10 +751,75 @@ export default function StoreSettings() {
   // Compliance details are captured once and then read-only: they identify the legal
   // entity behind the store, and a change after the fact is an admin-reviewed event, not
   // a self-service edit. Keyed off what the *server* holds, so the lock closes only after
-  // a value has actually persisted.
-  const saved = serverSettings?.settings ?? {};
-  const businessLocked = !!(saved.legalEntityType || saved.ownerName || saved.panNumber);
-  const licensesLocked = !!(saved.gstNumber || saved.healthPermitId || saved.registrationNo);
+  // a value has actually persisted — which, now that all three are mandatory, means the
+  // first successful save is what closes it.
+  const savedSettings = serverSettings?.settings ?? {};
+  const sectionLocked = (name) =>
+    spec.section(name).some((f) => !!savedSettings[leaf(f.path)]);
+  const businessLocked = sectionLocked("business");
+  const licensesLocked = sectionLocked("licenses");
+
+  const profile = (path) => spec.get(path);
+  const bind = (path) => ({
+    label: profile(path)?.label ?? "",
+    required: !!profile(path)?.required,
+    htmlFor: inputId(path),
+    error: errorFor(path),
+  });
+
+  // One text/date/number input, wired to the descriptor that describes it. A path the
+  // server didn't describe renders nothing rather than crashing the screen.
+  const renderInput = (field) =>
+    !field ? null : (
+    <Input
+      {...inputAttrs(field)}
+      value={
+        field.path.startsWith("settings.")
+          ? form.settings[leaf(field.path)]
+          : field.path.startsWith("delivery.")
+            ? form.delivery[leaf(field.path)]
+            : field.path.startsWith("address.")
+              ? form.address[leaf(field.path)]
+              : form[field.path]
+      }
+      onChange={onInput(field)}
+      onBlur={() => setTouched((t) => ({ ...t, [field.path]: true }))}
+      aria-invalid={!!errorFor(field.path)}
+      className={cn(field.transform === "uppercase" && "uppercase tracking-widest")}
+    />
+    );
+
+  // A card of descriptors — Business Details, Licenses & Tax, Delivery Logistics — laid
+  // out from the contract rather than from a hand-written list that has to be kept in
+  // step with it.
+  const renderSection = (name, { locked = false } = {}) =>
+    spec.section(name).map((field) => (
+      <div key={field.path} className={cn(field.wide && "sm:col-span-2")}>
+        {locked ? (
+          <LockedField label={field.label} value={form.settings[leaf(field.path)]} />
+        ) : (
+          <Field
+            label={field.label}
+            htmlFor={inputId(field.path)}
+            required={field.required}
+            error={errorFor(field.path)}
+          >
+            {field.type === "select" ? (
+              <SelectField
+                field={field}
+                value={form.settings[leaf(field.path)]}
+                onChange={(value) => setField(field.path, value)}
+                invalid={!!errorFor(field.path)}
+              />
+            ) : (
+              renderInput(field)
+            )}
+          </Field>
+        )}
+      </div>
+    ));
+
+  const brandLimits = requirements.brandImage;
 
   return (
     <DashboardLayout>
@@ -695,6 +828,8 @@ export default function StoreSettings() {
           <h1 className="text-2xl font-bold">Store Settings</h1>
           <p className="text-sm text-muted-foreground">
             Manage your restaurant profile, hours, delivery, and compliance details.
+            Fields marked <span className="font-semibold text-brand-maroon">*</span> are
+            required — changes can&apos;t be saved until each one holds a valid value.
           </p>
         </div>
 
@@ -708,103 +843,28 @@ export default function StoreSettings() {
               <h2 className="text-base font-bold">Restaurant Information</h2>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Restaurant Name" htmlFor="settings-name" error={errors.name}>
-                <Input
-                  id="settings-name"
-                  value={form.name}
-                  onChange={(e) => set({ name: e.target.value })}
-                  aria-invalid={!!errors.name}
-                />
-              </Field>
-              <Field label="Cuisine Types" htmlFor="settings-cuisine">
+              <Field {...bind("name")}>{renderInput(profile("name"))}</Field>
+              <Field {...bind("cuisineTypes")}>
                 <CuisineEditor
+                  field={profile("cuisineTypes")}
                   value={form.cuisineTypes}
-                  onChange={(cuisineTypes) => set({ cuisineTypes })}
+                  onChange={(cuisineTypes) => setField("cuisineTypes", cuisineTypes)}
                 />
               </Field>
-              <Field label="Email Address" htmlFor="settings-email" error={errors.email}>
-                <Input
-                  id="settings-email"
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => set({ email: e.target.value })}
-                  aria-invalid={!!errors.email}
-                />
-              </Field>
-              <Field label="Phone Number" htmlFor="settings-phone">
-                <Input
-                  id="settings-phone"
-                  type="tel"
-                  inputMode="tel"
-                  value={form.phone}
-                  onChange={(e) => set({ phone: e.target.value })}
-                />
-              </Field>
-              <Field label="Website" htmlFor="settings-website">
-                <Input
-                  id="settings-website"
-                  type="url"
-                  value={form.website}
-                  onChange={(e) => set({ website: e.target.value })}
-                  placeholder="https://example.com"
-                />
-              </Field>
-              <Field
-                label="Established Year"
-                htmlFor="settings-year"
-                error={errors.establishedYear}
-              >
-                <Input
-                  id="settings-year"
-                  value={form.establishedYear}
-                  onChange={(e) => set({ establishedYear: e.target.value.replace(/\D/g, "").slice(0, 4) })}
-                  inputMode="numeric"
-                  placeholder="1998"
-                  aria-invalid={!!errors.establishedYear}
-                />
-              </Field>
+              <Field {...bind("email")}>{renderInput(profile("email"))}</Field>
+              <Field {...bind("phone")}>{renderInput(profile("phone"))}</Field>
+              <Field {...bind("website")}>{renderInput(profile("website"))}</Field>
+              <Field {...bind("establishedYear")}>{renderInput(profile("establishedYear"))}</Field>
               <div className="sm:col-span-2">
-                <Field label="Description" htmlFor="settings-description">
-                  <Input
-                    id="settings-description"
-                    value={form.description}
-                    onChange={(e) => set({ description: e.target.value })}
-                    placeholder="What your restaurant is known for"
-                  />
-                </Field>
+                <Field {...bind("description")}>{renderInput(profile("description"))}</Field>
               </div>
               <div className="sm:col-span-2">
-                <Field label="Street" htmlFor="settings-street">
-                  <Input
-                    id="settings-street"
-                    value={form.address.street}
-                    onChange={(e) => setIn("address", { street: e.target.value })}
-                  />
-                </Field>
+                <Field {...bind("address.street")}>{renderInput(profile("address.street"))}</Field>
               </div>
-              <Field label="City" htmlFor="settings-city">
-                <Input
-                  id="settings-city"
-                  value={form.address.city}
-                  onChange={(e) => setIn("address", { city: e.target.value })}
-                />
-              </Field>
+              <Field {...bind("address.city")}>{renderInput(profile("address.city"))}</Field>
               <div className="grid grid-cols-2 gap-4">
-                <Field label="State" htmlFor="settings-state">
-                  <Input
-                    id="settings-state"
-                    value={form.address.state}
-                    onChange={(e) => setIn("address", { state: e.target.value })}
-                  />
-                </Field>
-                <Field label="Pincode" htmlFor="settings-pincode">
-                  <Input
-                    id="settings-pincode"
-                    value={form.address.pincode}
-                    onChange={(e) => setIn("address", { pincode: e.target.value.replace(/\D/g, "").slice(0, 6) })}
-                    inputMode="numeric"
-                  />
-                </Field>
+                <Field {...bind("address.state")}>{renderInput(profile("address.state"))}</Field>
+                <Field {...bind("address.pincode")}>{renderInput(profile("address.pincode"))}</Field>
               </div>
               <p className="text-[11px] text-muted-foreground sm:col-span-2">
                 Changing the address re-places your restaurant on the map, so customers
@@ -819,9 +879,9 @@ export default function StoreSettings() {
             </CardHeader>
             <CardContent className="space-y-4">
               <BrandImagePicker
-                label="Store Logo"
+                field={profile("logo")}
+                limits={brandLimits}
                 icon={ImageUp}
-                hint="Upload image (max 5 MB)"
                 fit="object-contain"
                 file={logoFile}
                 currentUrl={serverSettings?.logo}
@@ -829,9 +889,9 @@ export default function StoreSettings() {
                 onError={(text) => setStatus(text ? { tone: "error", text } : null)}
               />
               <BrandImagePicker
-                label="Banner Image"
+                field={profile("bannerImage")}
+                limits={brandLimits}
                 icon={ImagePlus}
-                hint="1920×1080 recommended"
                 fit="object-cover"
                 file={bannerFile}
                 currentUrl={serverSettings?.bannerImage}
@@ -846,8 +906,10 @@ export default function StoreSettings() {
         <Card className="mt-5">
           <CardHeader className="pb-4">
             <h2 className="text-base font-bold">Opening Hours</h2>
-            {errors.hours ? (
-              <p className="text-[11px] text-brand-maroon">{errors.hours}</p>
+            {errorFor("hours") ? (
+              <p role="alert" className="text-[11px] text-brand-maroon">
+                {errorFor("hours")}
+              </p>
             ) : null}
           </CardHeader>
           <CardContent className="p-0">
@@ -903,56 +965,17 @@ export default function StoreSettings() {
             <h2 className="text-base font-bold">Delivery Logistics</h2>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Radius (km)" htmlFor="delivery-radius" error={errors.radiusKm}>
-              <Input
-                id="delivery-radius"
-                type="number"
-                min="0"
-                step="0.5"
-                value={form.delivery.radiusKm}
-                onChange={(e) => setIn("delivery", { radiusKm: e.target.value })}
-                aria-invalid={!!errors.radiusKm}
-              />
-            </Field>
-            <Field label="Base Charge (₹)" htmlFor="delivery-charge" error={errors.baseCharge}>
-              <Input
-                id="delivery-charge"
-                type="number"
-                min="0"
-                value={form.delivery.baseCharge}
-                onChange={(e) => setIn("delivery", { baseCharge: e.target.value })}
-                aria-invalid={!!errors.baseCharge}
-              />
-            </Field>
-            <Field
-              label="Free Delivery Above (₹)"
-              htmlFor="delivery-threshold"
-              error={errors.freeThreshold}
-            >
-              <Input
-                id="delivery-threshold"
-                type="number"
-                min="0"
-                value={form.delivery.freeThreshold}
-                onChange={(e) => setIn("delivery", { freeThreshold: e.target.value })}
-                placeholder="Leave blank for none"
-                aria-invalid={!!errors.freeThreshold}
-              />
-            </Field>
-            <Field
-              label="Estimated Time (min)"
-              htmlFor="delivery-eta"
-              error={errors.estimatedMinutes}
-            >
-              <Input
-                id="delivery-eta"
-                type="number"
-                min="0"
-                value={form.delivery.estimatedMinutes}
-                onChange={(e) => setIn("delivery", { estimatedMinutes: e.target.value })}
-                aria-invalid={!!errors.estimatedMinutes}
-              />
-            </Field>
+            {spec.section("delivery").map((field) => (
+              <Field
+                key={field.path}
+                label={field.label}
+                htmlFor={inputId(field.path)}
+                required={field.required}
+                error={errorFor(field.path)}
+              >
+                {renderInput(field)}
+              </Field>
+            ))}
           </CardContent>
         </Card>
 
@@ -964,42 +987,13 @@ export default function StoreSettings() {
               {businessLocked && <LockBadge />}
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {businessLocked ? (
-                <>
-                  <LockedField label="Legal Entity Type" value={form.business.legalEntityType} />
-                  <LockedField label="Owner Name" value={form.business.ownerName} />
-                  <div className="sm:col-span-2">
-                    <LockedField label="Tax Identifier (PAN)" value={form.business.panNumber} />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <Field label="Legal Entity Type">
-                    <LegalEntitySelect
-                      value={form.business.legalEntityType}
-                      onChange={(legalEntityType) => setIn("business", { legalEntityType })}
-                    />
-                  </Field>
-                  <Field label="Owner Name" htmlFor="business-owner">
-                    <Input
-                      id="business-owner"
-                      value={form.business.ownerName}
-                      onChange={(e) => setIn("business", { ownerName: e.target.value })}
-                      placeholder="Full name"
-                    />
-                  </Field>
-                  <div className="sm:col-span-2">
-                    <Field label="Tax Identifier (PAN)" htmlFor="business-pan">
-                      <Input
-                        id="business-pan"
-                        value={form.business.panNumber}
-                        onChange={(e) => setIn("business", { panNumber: e.target.value.toUpperCase() })}
-                        placeholder="ABCDE1234F"
-                        className="uppercase tracking-widest"
-                      />
-                    </Field>
-                  </div>
-                </>
+              {renderSection("business", { locked: businessLocked })}
+              {!businessLocked && (
+                <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                  Required. These name the legal entity your store trades as, and admin
+                  reviews your application against them. Once saved they can only be
+                  changed by platform support.
+                </p>
               )}
             </CardContent>
           </Card>
@@ -1011,66 +1005,12 @@ export default function StoreSettings() {
               {licensesLocked && <LockBadge />}
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {licensesLocked ? (
-                <>
-                  <div className="sm:col-span-2">
-                    <LockedField label="GST Number" value={form.licenses.gstNumber} />
-                  </div>
-                  <LockedField label="FSSAI License No." value={form.licenses.fssai} />
-                  <LockedField label="FSSAI Expiry Date" value={form.licenses.fssaiExpiry} />
-                  <LockedField label="Trade License No." value={form.licenses.tradeLicense} />
-                  <LockedField label="Trade License Expiry" value={form.licenses.tradeLicenseExpiry} />
-                </>
-              ) : (
-                <>
-                  <div className="sm:col-span-2">
-                    <Field label="GST Number" htmlFor="license-gst">
-                      <Input
-                        id="license-gst"
-                        value={form.licenses.gstNumber}
-                        onChange={(e) => setIn("licenses", { gstNumber: e.target.value.toUpperCase() })}
-                        placeholder="27AACR1234F1Z1"
-                        className="uppercase tracking-widest"
-                      />
-                    </Field>
-                  </div>
-                  <Field label="FSSAI License No." htmlFor="license-fssai">
-                    <Input
-                      id="license-fssai"
-                      value={form.licenses.fssai}
-                      onChange={(e) => setIn("licenses", { fssai: e.target.value })}
-                      placeholder="H-992-B"
-                    />
-                  </Field>
-                  <Field label="FSSAI Expiry Date" htmlFor="license-fssai-expiry">
-                    <Input
-                      id="license-fssai-expiry"
-                      type="date"
-                      value={form.licenses.fssaiExpiry}
-                      onChange={(e) => setIn("licenses", { fssaiExpiry: e.target.value })}
-                    />
-                  </Field>
-                  <Field label="Trade License No." htmlFor="license-trade">
-                    <Input
-                      id="license-trade"
-                      value={form.licenses.tradeLicense}
-                      onChange={(e) => setIn("licenses", { tradeLicense: e.target.value })}
-                      placeholder="REG-9912002"
-                    />
-                  </Field>
-                  <Field label="Trade License Expiry" htmlFor="license-trade-expiry">
-                    <Input
-                      id="license-trade-expiry"
-                      type="date"
-                      value={form.licenses.tradeLicenseExpiry}
-                      onChange={(e) => setIn("licenses", { tradeLicenseExpiry: e.target.value })}
-                    />
-                  </Field>
-                  <p className="text-[11px] text-muted-foreground sm:col-span-2">
-                    These identify the legal entity behind your store. Once saved they can
-                    only be changed by platform support.
-                  </p>
-                </>
+              {renderSection("licenses", { locked: licensesLocked })}
+              {!licensesLocked && (
+                <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                  These identify the legal entity behind your store. Once saved they can
+                  only be changed by platform support.
+                </p>
               )}
             </CardContent>
           </Card>
@@ -1097,10 +1037,13 @@ export default function StoreSettings() {
           <Button type="button" variant="outline" onClick={discard} disabled={!dirty || saving}>
             Discard Changes
           </Button>
+          {/* Left enabled while the form is invalid on purpose: a disabled button explains
+              nothing, and the point of the required-field rule is that pressing Save is
+              what tells the owner which details are still missing. */}
           <Button
             type="button"
             onClick={save}
-            disabled={!dirty || saving || hasErrors}
+            disabled={!dirty || saving}
             className="bg-brand-gradient px-6 text-white hover:brightness-105"
           >
             {saving ? "Saving…" : "Save Changes"}

@@ -15,6 +15,13 @@ export const ownerApi = {
   updateRestaurant:    (rId, body) => client.patch(`/owner/${rId}/restaurant`, body),
 
   // ── Settings ─────────────────────────────────────────────────────
+  // The store-settings field contract — labels, which details are mandatory, the pattern
+  // each has to match, dropdown options, brand-image limits. Not restaurant-scoped: the
+  // "Add Your Restaurant" step is built from it too, and that runs before any restaurant
+  // exists. Served from server/config/storeSettings.config.js, the same module the PATCH
+  // below is validated against.
+  getSettingsRequirements: () => client.get("/owner/settings-requirements"),
+
   getSettings: (rId) => client.get(`/owner/${rId}/settings`),
   // PATCH /settings accepts multipart/form-data (optional `logo` + `banner`
   // files, max 5 MB each) alongside name/description/cuisineTypes/address/settings.
@@ -60,9 +67,17 @@ export const ownerApi = {
   getRecentOrders: (rId) => client.get(`/owner/${rId}/dashboard/recent-orders`),
 
   // ── Orders (read-only from owner view) ───────────────────────────
-  // params: { status, type: "dine_in"|"delivery", page, limit }
+  // Every order carries its resolved `table`, `staff` (who rang it in), `waiter`
+  // (assigned to the sitting) and `statusHistory` — see the server's
+  // services/orderView.service.js.
+  // params: { status, type: "dine_in"|"delivery", tableId, page, limit }
   listOrders: (rId, params = {}) => client.get(`/owner/${rId}/orders`, { params }),
   getOrder:   (rId, orderId)     => client.get(`/owner/${rId}/orders/${orderId}`),
+
+  // Dine-in orders grouped table -> sitting -> rounds.
+  // scope: "active" (default) | "today" | "all"
+  listOrdersByTable: (rId, params = {}) =>
+    client.get(`/owner/${rId}/orders/by-table`, { params }),
 
   // ── Bills ────────────────────────────────────────────────────────
   // params: { status: "open"|"paid", page, limit }

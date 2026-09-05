@@ -9,6 +9,9 @@ import { useState } from "react";
 import { Search } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
+import OrderDetailsDialog, {
+  formatDateTime, formatPrice, orderCode, placedByLabel, statusLabel, statusVariant,
+} from "@/components/OrderDetailsDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -32,6 +35,7 @@ const STATUS_TABS = [
   { value: "confirmed",        label: "Confirmed" },
   { value: "preparing",        label: "Preparing" },
   { value: "ready",            label: "Ready" },
+  { value: "served",           label: "Served" },
   { value: "out_for_delivery", label: "Out for delivery" },
   { value: "delivered",        label: "Delivered" },
   { value: "cancelled",        label: "Cancelled" },
@@ -43,29 +47,6 @@ const TYPE_TABS = [
   { value: "delivery", label: "Delivery" },
 ];
 
-function statusVariant(status = "") {
-  const key = String(status).toLowerCase();
-  if (key === "delivered") return "ok";
-  if (key === "ready") return "info";
-  if (key === "preparing" || key === "out_for_delivery") return "warn";
-  if (key === "cancelled") return "danger";
-  return "muted";
-}
-
-function formatPrice(value) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(Number(value) || 0);
-}
-
-function formatDateTime(value) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString("en-IN", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-  });
-}
 
 export default function ManagerOrders() {
   const { restaurantId } = useOwnerAuth();
@@ -74,6 +55,7 @@ export default function ManagerOrders() {
   const [type, setType]     = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage]     = useState(1);
+  const [detailOrder, setDetail] = useState(null);
 
   const params = {
     page,
@@ -89,6 +71,8 @@ export default function ManagerOrders() {
   const visible = search
     ? orders.filter((o) =>
         String(o._id).toLowerCase().includes(search.toLowerCase()) ||
+        String(o.tableNumber ?? "").toLowerCase().includes(search.toLowerCase()) ||
+        (o.staff?.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
         (o.items ?? []).some((i) => (i.name ?? "").toLowerCase().includes(search.toLowerCase())),
       )
     : orders;
@@ -162,8 +146,10 @@ export default function ManagerOrders() {
               <TableHeader>
                 <TableRow className="border-brand-cream/60">
                   <TableHead className="pl-6">Order</TableHead>
+                  <TableHead>Table</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Items</TableHead>
+                  <TableHead>Taken by</TableHead>
                   <TableHead>Placed</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="pr-6 text-right">Subtotal</TableHead>
@@ -171,23 +157,38 @@ export default function ManagerOrders() {
               </TableHeader>
               <TableBody>
                 {visible.map((o) => (
-                  <TableRow key={o._id}>
-                    <TableCell className="pl-6 font-semibold">
-                      #{String(o._id).slice(-6).toUpperCase()}
+                  <TableRow
+                    key={o._id}
+                    onClick={() => setDetail(o)}
+                    className="cursor-pointer"
+                  >
+                    <TableCell className="pl-6 font-semibold">{orderCode(o)}</TableCell>
+                    <TableCell>
+                      {o.tableNumber ? (
+                        <span className="font-medium">Table {o.tableNumber}</span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                      {o.batchNumber > 1 ? (
+                        <span className="block text-xs text-muted-foreground">
+                          Round {o.batchNumber}
+                        </span>
+                      ) : null}
                     </TableCell>
                     <TableCell className="capitalize text-muted-foreground">
                       {(o.type ?? "").replace("_", " ") || "—"}
                     </TableCell>
-                    <TableCell className="max-w-[280px] truncate">
+                    <TableCell className="max-w-[240px] truncate">
                       {(o.items ?? []).map((i) => `${i.quantity}× ${i.name}`).join(", ") || "—"}
+                    </TableCell>
+                    <TableCell className="max-w-[150px] truncate text-muted-foreground">
+                      {placedByLabel(o)}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatDateTime(o.createdAt)}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={statusVariant(o.status)} className="capitalize">
-                        {(o.status ?? "").replace("_", " ")}
-                      </Badge>
+                      <Badge variant={statusVariant(o.status)}>{statusLabel(o.status)}</Badge>
                     </TableCell>
                     <TableCell className="pr-6 text-right font-bold">
                       {formatPrice(o.subtotal)}
@@ -196,7 +197,7 @@ export default function ManagerOrders() {
                 ))}
                 {visible.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                       {isLoading ? "Loading…" : "No orders match these filters."}
                     </TableCell>
                   </TableRow>
@@ -223,6 +224,8 @@ export default function ManagerOrders() {
           </Button>
         </div>
       ) : null}
+
+      <OrderDetailsDialog order={detailOrder} onClose={() => setDetail(null)} />
     </DashboardLayout>
   );
 }

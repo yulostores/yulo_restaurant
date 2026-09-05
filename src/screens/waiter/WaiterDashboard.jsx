@@ -4,9 +4,9 @@
 // (POST …/waiter/tables/scan), orders are fired against its tableSessionId, and
 // the session closes when the bill is marked paid.
 //
-// Order status transitions live on the chef KDS routes (role: chef), so a waiter
-// token cannot move a ticket — this screen is read-only on status and acts only
-// on the bill. See API-GAPS.md.
+// The floor now owns the last step of a ticket: PATCH …/waiter/orders/:id/status lets
+// this screen mark a round served once it reaches the table, which is reflected straight
+// away in the owner portal. Everything before that is still the kitchen's to drive.
 
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -17,6 +17,7 @@ import {
   useMarkPaid,
   useScanTable,
   useSessionBill,
+  useUpdateOrderStatus,
   useWaiterSessions,
   useWaiterTables,
 } from "@/hooks/staff/useWaiter";
@@ -36,10 +37,29 @@ const STATUS_TONE = {
   confirmed:        "bg-[#E7F0FB] text-[#1565C0]",
   preparing:        "bg-brand-orange/10 text-brand-orange",
   ready:            "bg-emerald-50 text-emerald-600",
+  served:           "bg-emerald-50 text-emerald-700",
   out_for_delivery: "bg-[#FFF3E0] text-[#D9480F]",
   delivered:        "bg-[#F3F4F6] text-[#5F5F5F]",
   cancelled:        "bg-red-50 text-brand-maroon",
 };
+
+// The single next step the floor can take on a round. Nothing is offered once it has
+// been served or cancelled — there is no floor action left, and a button that could only
+// fail is worse than none.
+function nextAction(order) {
+  switch (order.status) {
+    case "placed":    return { newStatus: "confirmed", label: "Confirm" };
+    case "confirmed": return { newStatus: "preparing", label: "Start prep" };
+    case "preparing": return { newStatus: "served",    label: "Mark served" };
+    case "ready":     return { newStatus: "served",    label: "Mark served" };
+    default:          return null;
+  }
+}
+
+function roundTime(value) {
+  if (!value) return null;
+  return new Date(value).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+}
 
 const FILTERS = [
   { value: "all",       label: "All Tables" },
@@ -72,7 +92,9 @@ function sessionState(session) {
   const orders = (session.orders ?? []).filter((o) => o.status !== "cancelled");
   if (orders.length === 0) return "active";
   if (orders.some((o) => o.status === "ready")) return "ready";
-  if (orders.every((o) => o.status === "delivered")) return "served";
+  // 'served' is the dine-in terminal state the waiter sets; 'delivered' is kept for
+  // orders closed out before that state existed.
+  if (orders.every((o) => o.status === "served" || o.status === "delivered")) return "served";
   return "active";
 }
 
@@ -185,7 +207,7 @@ function BillPanel({ restaurantId, session, onClose }) {
 }
 
 /* ── One table session ── */
-function SessionCard({ session, tableLabel, onAddItems, onViewBill }) {
+function SessionCard({ session, tableLabel, onAddItems, onViewBill, onAdvance, pendingOrderId }) {
   const orders = session.orders ?? [];
 
   return (
@@ -196,7 +218,7 @@ function SessionCard({ session, tableLabel, onAddItems, onViewBill }) {
             {tableLabel}
           </span>
           <span className="rounded-full bg-brand-orange/10 px-2.5 py-0.5 text-[10px] font-bold uppercase text-brand-orange">
-            {session.batchCount ?? orders.length} batches
+            {session.batchCount ?? orders.length} rounds
           </span>
         </div>
         <span className="text-sm font-bold text-brand-red">
@@ -212,9 +234,11 @@ function SessionCard({ session, tableLabel, onAddItems, onViewBill }) {
         ) : (
           orders.map((o) => (
             <div key={o._id} className="rounded-xl border border-brand-cream/50 p-3">
-              <div className="mb-2 flex items-center justify-between">
+              <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-muted-foreground">
-                  Batch {o.batchNumber ?? "—"} · #{String(o._id).slice(-5).toUpperCase()}
+                  Round {o.round ?? o.batchNumber ?? "—"}
+                  {roundTime(o.createdAt) ? " · " + roundTime(o.createdAt) : ""}
+                  {" · #" + String(o._id).slice(-5).toUpperCase()}
                 </span>
                 <span
                   className={cn(
@@ -232,6 +256,26 @@ function SessionCard({ session, tableLabel, onAddItems, onViewBill }) {
                   </p>
                 ))}
               </div>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                Taken by{" "}
+                {o.staff?.name ??
+                  (o.placedBy === "guest" ? "the guest (table QR)" : "the customer app")}
+              </p>
+              {nextAction(o) ? (
+                <button
+                  type="button"
+                  disabled={pendingOrderId === o._id}
+                  onClick={() => onAdvance(o, nextAction(o).newStatus)}
+                  className={cn(
+                    "mt-2.5 w-full rounded-lg py-2 text-xs font-bold text-white transition",
+                    pendingOrderId === o._id
+                      ? "bg-brand-orange/60"
+                      : "bg-brand-gradient hover:brightness-105",
+                  )}
+                >
+                  {pendingOrderId === o._id ? "Updating…" : nextAction(o).label}
+                </button>
+              ) : null}
               {o.specialInstructions ? (
                 <p className="mt-2 text-xs italic text-muted-foreground">
                   “{o.specialInstructions}”
@@ -271,6 +315,21 @@ export default function WaiterDashboard() {
 
   const [filter, setFilter] = useState("all");
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState(null);
+  const [statusError, setStatusError] = useState(null);
+  const advance = useUpdateOrderStatus(restaurantId);
+
+  async function handleAdvance(order, newStatus) {
+    setStatusError(null);
+    setPendingOrderId(order._id);
+    try {
+      await advance.mutateAsync({ orderId: order._id, newStatus });
+    } catch (err) {
+      setStatusError(err?.message ?? "Could not update this round — please try again.");
+    } finally {
+      setPendingOrderId(null);
+    }
+  }
   const [billSession, setBillSession] = useState(null);
   const [actionError, setActionError] = useState("");
 
@@ -390,15 +449,25 @@ export default function WaiterDashboard() {
           ))}
         </div>
 
+        {statusError ? (
+          <p className="mb-3 text-sm text-brand-maroon">{statusError}</p>
+        ) : null}
+
         {/* Sessions */}
         <div className="space-y-4">
           {visible.map((session) => (
             <SessionCard
               key={session._id}
               session={session}
-              tableLabel={tableLabelById[session.tableId] ?? "Table"}
+              tableLabel={
+                session.tableNumber
+                  ? "Table " + session.tableNumber
+                  : tableLabelById[session.tableId] ?? "Table"
+              }
               onAddItems={() => openTableForOrdering(session)}
               onViewBill={() => setBillSession(session)}
+              onAdvance={handleAdvance}
+              pendingOrderId={pendingOrderId}
             />
           ))}
           {visible.length === 0 ? (
