@@ -106,7 +106,7 @@ function RoundRow({ order, onView }) {
   );
 }
 
-function TableGroup({ group, expanded, onToggle, onView }) {
+function TableGroup({ group, expanded, onToggle, onView, onViewBill }) {
   const { summary, session } = group;
   const sittings = group.sittings ?? [];
   const staffNames = summary.staff.map((s) => s.name).filter(Boolean);
@@ -201,6 +201,17 @@ function TableGroup({ group, expanded, onToggle, onView }) {
                     {sitting.orders.length} {sitting.orders.length === 1 ? "round" : "rounds"} ·{" "}
                     {formatPrice(sitting.subtotal)}
                   </span>
+                  {/* A sitting IS the unit a bill is raised for, so any of its orders
+                      resolves to the same receipt — see GET .../orders/:orderId/bill. */}
+                  {sitting.orders.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onViewBill(sitting.orders[0]._id)}
+                      className="flex items-center gap-1 text-xs font-semibold text-brand-orange hover:underline"
+                    >
+                      <Receipt className="h-3.5 w-3.5" /> View bill
+                    </button>
+                  ) : null}
                 </div>
                 {sitting.orders.length === 0 ? (
                   <p className="px-4 py-4 text-sm text-muted-foreground">
@@ -425,6 +436,7 @@ export default function ManageOrders() {
                     expanded={Boolean(expanded[key])}
                     onToggle={() => setExpanded((e) => ({ ...e, [key]: !e[key] }))}
                     onView={setDetail}
+                    onViewBill={(orderId) => navigate(`/bill?orderId=${orderId}`)}
                   />
                 );
               })
@@ -503,7 +515,7 @@ export default function ManageOrders() {
                         key={order._id}
                         order={order}
                         onView={setDetail}
-                        onViewBill={() => navigate("/bill")}
+                        onViewBill={() => navigate(`/bill?orderId=${order._id}`)}
                       />
                     ))}
                     {visible.length === 0 ? (

@@ -95,16 +95,25 @@ notice when the session came from a table QR.
 
 ---
 
-### 1.5 Order → bill lookup
-Bills belong to a `tableSessionId`. There is no way to go from an order id to its
-bill, so "view the bill for this order" cannot be built.
+### 1.5 Order → bill lookup — ~~gap~~ **closed**
+Bills belong to a `tableSessionId`, so "view the bill for this order" had nothing to
+call: the Manage Orders screen's bill button just navigated to the bill list.
+
+Now served by a purpose-built endpoint:
 
 ```
 GET /api/owner/:restaurantId/orders/:orderId/bill
 ```
 
-Worked around in [src/screens/BillDetails.jsx](src/screens/BillDetails.jsx),
-which lists bills and opens one by `?billId=`.
+A dine-in order resolves to its table session's bill (which batches the sitting's
+rounds), a delivery/takeaway order to its own single-order bill. It answers `200` with
+`bill: null` — not an error — for a sitting that has not been billed yet, which the
+screen renders as "not billed yet".
+
+Used by [src/hooks/owner/useBills.js](src/hooks/owner/useBills.js) and opened from
+[src/screens/ManageOrders.jsx](src/screens/ManageOrders.jsx) via
+`/bill?orderId=<id>`; [src/screens/BillDetails.jsx](src/screens/BillDetails.jsx) still
+also opens a bill directly by `?billId=`.
 
 ---
 

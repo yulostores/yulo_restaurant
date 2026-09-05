@@ -80,9 +80,13 @@ export const ownerApi = {
     client.get(`/owner/${rId}/orders/by-table`, { params }),
 
   // ── Bills ────────────────────────────────────────────────────────
-  // params: { status: "open"|"paid", page, limit }
+  // params: { status: "open"|"paid", type, tableNumber, from, to, q, page, limit }
   listBills: (rId, params = {}) => client.get(`/owner/${rId}/bills`, { params }),
   getBill:   (rId, billId)      => client.get(`/owner/${rId}/bills/${billId}`),
+  // The bill an order ended up on — a dine-in order resolves to its table session's bill,
+  // a delivery/takeaway order to its own. Answers 200 with `bill: null` when the sitting
+  // has not been billed yet.
+  getBillForOrder: (rId, orderId) => client.get(`/owner/${rId}/orders/${orderId}/bill`),
 
   // ── Menu Items ───────────────────────────────────────────────────
   // create/update take multipart/form-data (optional `image` file, max 5 MB).

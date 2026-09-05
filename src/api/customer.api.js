@@ -32,6 +32,12 @@ export const customerApi = {
   listMyRequests: (restaurantId, tableId) =>
     client.get(`/restaurants/${restaurantId}/requests`, { params: { tableId } }),
 
+  // ── The table's bill (no auth — scoped by the scanned table) ──────
+  // Answers 404 while no session is open on the table, which is simply "nothing ordered
+  // yet"; hooks/customer/useTableBill.js maps that to null rather than an error.
+  getTableBill: (restaurantId, tableId) =>
+    client.get(`/restaurants/${restaurantId}/tables/${tableId}/bill`),
+
   // ── Customer Orders ───────────────────────────────────────────────
   // NOTE: the documented POST /api/orders only accepts type "delivery" and
   // requires a deliveryAddress. There is no customer-initiated dine-in order

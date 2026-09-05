@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BellRing, ChevronLeft, ClipboardList, Tag, UserRound, UtensilsCrossed } from "lucide-react";
+import { BellRing, ChevronLeft, ClipboardList, ReceiptText, Tag, UserRound, UtensilsCrossed } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useCustomer } from "./CustomerApp";
@@ -11,6 +11,9 @@ import { useCustomer } from "./CustomerApp";
 const NAV = [
   { to: "/order/menu", label: "Menu", icon: UtensilsCrossed },
   { to: "/order/offers", label: "Offers", icon: Tag },
+  // The guest's own bill for the table they scanned into — the one thing they need to
+  // reach without asking a waiter first, so it sits in the nav rather than behind Help.
+  { to: "/order/bill", label: "Bill", icon: ReceiptText },
   { to: "/order/help", label: "Help", icon: BellRing },
   { to: "/order/cart", label: "Cart", icon: ClipboardList },
   { to: "/order/profile", label: "Account", icon: UserRound },
@@ -104,7 +107,7 @@ export default function CustomerLayout({
         ) : null}
 
         {showNav ? (
-          <nav className="sticky bottom-0 z-10 grid grid-cols-5 border-t border-brand-cream/60 bg-white">
+          <nav className="sticky bottom-0 z-10 grid grid-cols-6 border-t border-brand-cream/60 bg-white">
             {NAV.map((item) => {
               const Icon = item.icon;
               const active = activeNav === item.label;

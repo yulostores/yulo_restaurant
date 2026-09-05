@@ -1,161 +1,114 @@
 // Bills (/bill) — GET /api/owner/:rId/bills and /bills/:billId.
 //
-// Bills belong to a table session, not to a single order, and the API has no
-// order→bill lookup, so this screen lists the restaurant's bills and opens one
-// by ?billId=. Payment is closed out by the waiter (mark-paid); the owner view
-// is read-only. See API-GAPS.md.
+// A bill belongs to a table SESSION (a whole sitting), not to a single order, so it
+// batches every round the table ordered. The list is filterable by status, type and free
+// text over the receipt number and table; opening one shows the full receipt — the same
+// document the waiter settles against and the guest pays from (components/BillDocument.jsx).
+//
+// Arriving with ?orderId= resolves that order to the bill it landed on
+// (GET /api/owner/:rId/orders/:orderId/bill), which is how the Manage Orders screen opens
+// the bill for a given order.
 
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Download, Printer, Receipt } from "lucide-react";
+import { ArrowLeft, Printer, Receipt, Search } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
-import { useBill, useBills } from "@/hooks/owner/useBills";
+import { useBill, useBillForOrder, useBills } from "@/hooks/owner/useBills";
+import BillDocument from "@/components/BillDocument";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell,
   TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { formatDateTime, formatMoney, humanize } from "@/lib/bill";
 import { cn } from "@/lib/utils";
 
-function formatPrice(value) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency", currency: "INR", maximumFractionDigits: 2,
-  }).format(Number(value) || 0);
-}
-
-function formatDateTime(value) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString("en-IN", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-  });
-}
-
 // ── Single bill ──────────────────────────────────────────────────────
-function BillView({ restaurantId, billId, onBack }) {
-  const { data: bill, isLoading, isError, error } = useBill(restaurantId, billId);
+function BillView({ bill, isLoading, isError, error, onBack }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   if (isError) {
     return <p className="text-sm text-brand-maroon">Failed to load bill: {error.message}</p>;
   }
-  if (isLoading || !bill) {
+  if (isLoading) {
     return <p className="text-sm text-muted-foreground">Loading bill…</p>;
   }
-
-  const paid = bill.status === "paid";
+  if (!bill) {
+    return (
+      <>
+        <BackLink onBack={onBack} />
+        <p className="text-sm text-muted-foreground">
+          This order has not been billed yet. A dine-in bill is raised when the table&apos;s
+          bill is first opened, and settled when the guest pays.
+        </p>
+      </>
+    );
+  }
 
   return (
     <>
-      <button
-        type="button"
-        onClick={onBack}
-        className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-[#24190f]"
-      >
-        <ArrowLeft className="h-4 w-4" /> Back to all bills
-      </button>
+      <BackLink onBack={onBack} />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">
-            Bill #{String(bill._id).slice(-6).toUpperCase()}
-          </h1>
+          <h1 className="text-2xl font-bold">Bill {bill.billNumber ?? bill.reference}</h1>
           <p className="text-sm text-muted-foreground">
-            Session {String(bill.tableSessionId ?? "").slice(-6).toUpperCase() || "—"}
-            {bill.paidAt ? ` · paid ${formatDateTime(bill.paidAt)}` : ""}
+            {[
+              bill.tableNumber ? `Table ${bill.tableNumber}` : humanize(bill.type),
+              bill.restaurant?.name,
+              bill.payment?.paidAt
+                ? `paid ${formatDateTime(bill.payment.paidAt)}`
+                : `raised ${formatDateTime(bill.createdAt)}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={paid ? "ok" : "warn"} className="capitalize">{bill.status}</Badge>
+        <div className="flex flex-wrap items-center gap-2 print:hidden">
+          <Badge variant={bill.payment?.isPaid ? "ok" : "warn"} className="capitalize">
+            {bill.status}
+          </Badge>
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => setHistoryOpen((open) => !open)}
+          >
+            <Receipt className="h-4 w-4" />
+            {historyOpen ? "Hide details" : "View details"}
+          </Button>
           <Button variant="outline" className="gap-2" onClick={() => window.print()}>
             <Printer className="h-4 w-4" /> Print
-          </Button>
-          <Button variant="outline" className="gap-2" disabled title="No PDF endpoint in the API">
-            <Download className="h-4 w-4" /> PDF
           </Button>
         </div>
       </div>
 
       <Card>
-        <CardHeader className="pb-3">
-          <h2 className="text-base font-bold">Items</h2>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-brand-cream/60">
-                <TableHead className="pl-6">Item</TableHead>
-                <TableHead>Qty</TableHead>
-                <TableHead>Unit</TableHead>
-                <TableHead className="pr-6 text-right">Subtotal</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {(bill.items ?? []).map((item, i) => (
-                <TableRow key={`${item.name}-${i}`}>
-                  <TableCell className="pl-6 font-medium">{item.name}</TableCell>
-                  <TableCell className="text-brand-orange">{item.quantity}×</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {formatPrice(item.unitPrice)}
-                  </TableCell>
-                  <TableCell className="pr-6 text-right font-semibold">
-                    {formatPrice(item.subtotal)}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {(bill.items ?? []).length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
-                    This bill has no line items.
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <h2 className="text-base font-bold">Payment summary</h2>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Subtotal</span>
-            <span className="font-medium">{formatPrice(bill.subtotal)}</span>
-          </div>
-          {bill.discountAmount ? (
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Discount</span>
-              <span className="font-medium text-brand-green">
-                −{formatPrice(bill.discountAmount)}
-              </span>
-            </div>
-          ) : null}
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">
-              Tax{bill.taxRate ? ` (${Math.round(bill.taxRate * 100)}%)` : ""}
-            </span>
-            <span className="font-medium">{formatPrice(bill.taxAmount)}</span>
-          </div>
-          <div className="flex justify-between border-t border-brand-cream/70 pt-2.5 text-base">
-            <span className="font-bold">Grand total</span>
-            <span className="font-bold text-brand-red">{formatPrice(bill.grandTotal)}</span>
-          </div>
-          {bill.paymentMethod ? (
-            <p className="pt-1 text-xs capitalize text-muted-foreground">
-              Paid by {bill.paymentMethod}
-            </p>
-          ) : (
-            <p className="pt-1 text-xs text-muted-foreground">
-              Still open — the waiter closes this bill when the guest pays.
-            </p>
-          )}
+        <CardContent className="p-5 sm:p-6">
+          <BillDocument
+            bill={bill}
+            historyOpen={historyOpen}
+            onToggleHistory={setHistoryOpen}
+          />
         </CardContent>
       </Card>
     </>
+  );
+}
+
+function BackLink({ onBack }) {
+  return (
+    <button
+      type="button"
+      onClick={onBack}
+      className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-[#24190f] print:hidden"
+    >
+      <ArrowLeft className="h-4 w-4" /> Back to all bills
+    </button>
   );
 }
 
@@ -166,18 +119,48 @@ const STATUSES = [
   { value: "paid", label: "Paid" },
 ];
 
+const TYPES = [
+  { value: "",         label: "All types" },
+  { value: "dine_in",  label: "Dine in" },
+  { value: "delivery", label: "Delivery" },
+  { value: "takeaway", label: "Takeaway" },
+];
+
+// The bill opened by ?billId=, or the one an ?orderId= resolves to. Kept as its own
+// component so each hook runs only for the mode actually in use.
+function BillRoute({ restaurantId, billId, orderId, onBack }) {
+  const byId = useBill(restaurantId, billId);
+  const byOrder = useBillForOrder(restaurantId, orderId);
+  const source = billId ? byId : byOrder;
+
+  return (
+    <BillView
+      bill={source.data ?? null}
+      isLoading={source.isLoading}
+      isError={source.isError}
+      error={source.error}
+      onBack={onBack}
+    />
+  );
+}
+
 export default function BillDetails() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { restaurantId } = useOwnerAuth();
 
   const billId = searchParams.get("billId");
+  const orderId = searchParams.get("orderId");
   const [status, setStatus] = useState("");
+  const [type, setType] = useState("");
+  const [query, setQuery] = useState("");
 
-  const { data: bills = [], isLoading, isError, error } = useBills(
-    restaurantId,
-    status ? { status, limit: 50 } : { limit: 50 },
-  );
+  const { data: bills = [], isLoading, isError, error } = useBills(restaurantId, {
+    limit: 50,
+    ...(status && { status }),
+    ...(type && { type }),
+    ...(query.trim() && { q: query.trim() }),
+  });
 
   if (!restaurantId) {
     return (
@@ -187,12 +170,13 @@ export default function BillDetails() {
     );
   }
 
-  if (billId) {
+  if (billId || orderId) {
     return (
       <DashboardLayout>
-        <BillView
+        <BillRoute
           restaurantId={restaurantId}
           billId={billId}
+          orderId={orderId}
           onBack={() => setSearchParams({})}
         />
       </DashboardLayout>
@@ -212,28 +196,58 @@ export default function BillDetails() {
       <div>
         <h1 className="text-2xl font-bold">Bills</h1>
         <p className="text-sm text-muted-foreground">
-          Table-session bills, with their tax and discount breakdown.
+          Every receipt this restaurant has issued — the table it was raised for, its tax and
+          discount breakdown, and the rounds behind it.
         </p>
       </div>
 
       {isError ? <p className="text-sm text-brand-maroon">Failed to load: {error.message}</p> : null}
 
-      <div className="flex flex-wrap gap-1.5">
-        {STATUSES.map((s) => (
-          <button
-            key={s.value || "all"}
-            type="button"
-            onClick={() => setStatus(s.value)}
-            className={cn(
-              "rounded-full px-3.5 py-1.5 text-sm font-medium transition",
-              status === s.value
-                ? "bg-brand-gradient text-white"
-                : "border border-brand-cream bg-white text-[#5a403e] hover:bg-brand-cream/30",
-            )}
-          >
-            {s.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-1.5">
+          {STATUSES.map((s) => (
+            <button
+              key={s.value || "all"}
+              type="button"
+              onClick={() => setStatus(s.value)}
+              className={cn(
+                "rounded-full px-3.5 py-1.5 text-sm font-medium transition",
+                status === s.value
+                  ? "bg-brand-gradient text-white"
+                  : "border border-brand-cream bg-white text-[#5a403e] hover:bg-brand-cream/30",
+              )}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {TYPES.map((t) => (
+            <button
+              key={t.value || "all-types"}
+              type="button"
+              onClick={() => setType(t.value)}
+              className={cn(
+                "rounded-full px-3.5 py-1.5 text-sm font-medium transition",
+                type === t.value
+                  ? "border-brand-orange bg-brand-orange/10 text-brand-orange"
+                  : "border border-brand-cream bg-white text-[#5a403e] hover:bg-brand-cream/30",
+                "border",
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="relative ml-auto w-full sm:w-64">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Bill no. or table"
+            className="pl-9"
+          />
+        </div>
       </div>
 
       <Card>
@@ -245,9 +259,11 @@ export default function BillDetails() {
             <Table>
               <TableHeader>
                 <TableRow className="border-brand-cream/60">
-                  <TableHead className="pl-6">Bill</TableHead>
+                  <TableHead className="pl-6">Bill no.</TableHead>
+                  <TableHead>Table</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Raised</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Paid</TableHead>
                   <TableHead>Method</TableHead>
                   <TableHead className="pr-6 text-right">Total</TableHead>
                 </TableRow>
@@ -262,29 +278,37 @@ export default function BillDetails() {
                     <TableCell className="pl-6">
                       <span className="flex items-center gap-2 font-semibold">
                         <Receipt className="h-4 w-4 shrink-0 text-brand-orange" />
-                        #{String(b._id).slice(-6).toUpperCase()}
+                        {b.billNumber ?? b.reference}
                       </span>
+                    </TableCell>
+                    <TableCell>
+                      {b.tableNumber ? (
+                        <span className="font-medium">Table {b.tableNumber}</span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{humanize(b.type)}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatDateTime(b.createdAt)}
                     </TableCell>
                     <TableCell>
                       <Badge variant={b.status === "paid" ? "ok" : "warn"} className="capitalize">
                         {b.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDateTime(b.paidAt)}
-                    </TableCell>
                     <TableCell className="capitalize text-muted-foreground">
-                      {b.paymentMethod ?? "—"}
+                      {b.payment?.method ?? "—"}
                     </TableCell>
                     <TableCell className="pr-6 text-right font-bold">
-                      {formatPrice(b.grandTotal)}
+                      {formatMoney(b.charges?.grandTotal)}
                     </TableCell>
                   </TableRow>
                 ))}
                 {bills.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
-                      {isLoading ? "Loading bills…" : "No bills yet."}
+                    <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                      {isLoading ? "Loading bills…" : "No bills match these filters."}
                     </TableCell>
                   </TableRow>
                 ) : null}

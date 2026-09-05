@@ -23,6 +23,7 @@ import {
 } from "@/hooks/staff/useWaiter";
 // The public restaurant endpoint needs no auth, so a staff token can read it.
 import { useRestaurant } from "@/hooks/customer/useMenu";
+import BillDocument from "@/components/BillDocument";
 import QRScannerModal from "@/components/QRScannerModal";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -99,6 +100,10 @@ function sessionState(session) {
 }
 
 /* ── Bill panel for one session ── */
+// Renders the same bill document the owner console and the guest's own phone show
+// (components/BillDocument.jsx) — table number, the restaurant's tax details, every round
+// ordered and the full charge breakdown — with the floor's settle controls beneath it. The
+// waiter and the guest must never be settling against two different readings of one bill.
 function BillPanel({ restaurantId, session, onClose }) {
   const sessionId = session._id;
   const { data: bill, isLoading } = useSessionBill(restaurantId, sessionId);
@@ -133,73 +138,40 @@ function BillPanel({ restaurantId, session, onClose }) {
         {isLoading || !bill ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Assembling bill…</p>
         ) : (
-          <>
-            <div className="mb-4 space-y-1.5">
-              {(bill.items ?? []).map((item, i) => (
-                <div key={`${item.name}-${i}`} className="flex justify-between text-sm">
-                  <span>{item.quantity} × {item.name}</span>
-                  <span className="font-medium">{formatPrice(item.subtotal)}</span>
+          <BillDocument
+            bill={bill}
+            footer={
+              bill.payment?.isPaid ? null : (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {PAYMENT_METHODS.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setMethod(m)}
+                        className={cn(
+                          "rounded-full px-3.5 py-1.5 text-xs font-bold uppercase transition",
+                          method === m
+                            ? "bg-brand-gradient text-white"
+                            : "border border-brand-cream bg-white text-[#5a403e]",
+                        )}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={settle}
+                    disabled={isPending}
+                    className="w-full rounded-xl bg-brand-gradient py-3 text-sm font-bold text-white disabled:opacity-60"
+                  >
+                    {isPending ? "Closing…" : "Mark as paid"}
+                  </button>
                 </div>
-              ))}
-            </div>
-
-            <div className="space-y-1.5 border-t border-brand-cream/60 pt-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span>{formatPrice(bill.subtotal)}</span>
-              </div>
-              {bill.discountAmount ? (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Discount</span>
-                  <span className="text-brand-green">−{formatPrice(bill.discountAmount)}</span>
-                </div>
-              ) : null}
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">
-                  Tax{bill.taxRate ? ` (${Math.round(bill.taxRate * 100)}%)` : ""}
-                </span>
-                <span>{formatPrice(bill.taxAmount)}</span>
-              </div>
-              <div className="flex justify-between border-t border-brand-cream/60 pt-2 text-base font-bold">
-                <span>Total</span>
-                <span className="text-brand-red">{formatPrice(bill.grandTotal)}</span>
-              </div>
-            </div>
-
-            {bill.status === "paid" ? (
-              <p className="mt-4 rounded-xl bg-emerald-50 py-3 text-center text-sm font-bold text-emerald-700">
-                Paid by {bill.paymentMethod}
-              </p>
-            ) : (
-              <div className="mt-4 space-y-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {PAYMENT_METHODS.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setMethod(m)}
-                      className={cn(
-                        "rounded-full px-3.5 py-1.5 text-xs font-bold uppercase transition",
-                        method === m
-                          ? "bg-brand-gradient text-white"
-                          : "border border-brand-cream bg-white text-[#5a403e]",
-                      )}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={settle}
-                  disabled={isPending}
-                  className="w-full rounded-xl bg-brand-gradient py-3 text-sm font-bold text-white disabled:opacity-60"
-                >
-                  {isPending ? "Closing…" : "Mark as paid"}
-                </button>
-              </div>
-            )}
-          </>
+              )
+            }
+          />
         )}
       </div>
     </div>

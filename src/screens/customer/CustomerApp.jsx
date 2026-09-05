@@ -19,6 +19,7 @@ import ItemDetail from "./ItemDetail";
 import Cart from "./Cart";
 import Confirmation from "./Confirmation";
 import OrderStatus from "./OrderStatus";
+import CustomerBill from "./Bill";
 import Offers from "./Offers";
 import CustomerHelp from "./CustomerHelp";
 import CustomerProfile from "./CustomerProfile";
@@ -166,6 +167,7 @@ export default function CustomerApp() {
         <Route path="cart" element={<Guard><Cart /></Guard>} />
         <Route path="confirmation/:orderId" element={<Guard><Confirmation /></Guard>} />
         <Route path="status/:orderId" element={<Guard><OrderStatus /></Guard>} />
+        <Route path="bill" element={<Guard><CustomerBill /></Guard>} />
         <Route path="offers" element={<Guard><Offers /></Guard>} />
         <Route path="help" element={<Guard><CustomerHelp /></Guard>} />
         <Route path="profile" element={<Guard><CustomerProfile /></Guard>} />
