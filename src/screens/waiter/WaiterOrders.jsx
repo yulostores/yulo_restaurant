@@ -5,9 +5,9 @@
 // button here, which PATCHes /waiter/orders/:orderId/status and is reflected immediately
 // in the owner portal's Manage Orders and dashboard feed.
 //
-// Where the kitchen isn't running the KDS at all, the same endpoint also lets the waiter
-// walk a ticket forward through confirmed/preparing/ready — the server enforces the same
-// transition table either way, so nothing can jump backwards.
+// It is also the *only* step the floor takes: everything before it belongs to the
+// kitchen, so the button sits disabled until the chef marks the round ready. See
+// ./orderStatus.js.
 
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
@@ -16,27 +16,16 @@ import { useStaffAuth } from "@/context/StaffAuthContext";
 import { useUpdateOrderStatus, useWaiterSessions, useWaiterTables } from "@/hooks/staff/useWaiter";
 import { cn } from "@/lib/utils";
 import WaiterLayout, { WaiterPageHeader, formatPrice } from "./WaiterLayout";
+import { SERVE_BLOCKED_HINT, floorStatus, floorStatusLabel, serveAction } from "./orderStatus";
 
+// Keyed by the floor's reading of a ticket, not the kitchen's raw status.
 const STATUS_TONE = {
-  placed:           "bg-[#F3F4F6] text-[#5F5F5F]",
-  confirmed:        "bg-[#E7F0FB] text-[#1565C0]",
   preparing:        "bg-[#FFF3E0] text-[#D9480F]",
-  ready:            "bg-[#E8F5EC] text-brand-green",
+  prepared:         "bg-[#E8F5EC] text-brand-green",
   served:           "bg-[#E8F5EC] text-[#2E7D32]",
   out_for_delivery: "bg-[#FFF3E0] text-[#D9480F]",
   delivered:        "bg-[#F3F4F6] text-[#5F5F5F]",
   cancelled:        "bg-[#FCE9E4] text-brand-maroon",
-};
-
-const STATUS_LABEL = {
-  placed: "Placed",
-  confirmed: "Confirmed",
-  preparing: "Preparing",
-  ready: "Ready",
-  served: "Served",
-  out_for_delivery: "Out for delivery",
-  delivered: "Delivered",
-  cancelled: "Cancelled",
 };
 
 // The furthest-behind ticket sets the table's headline status.
@@ -52,19 +41,6 @@ function tableStatus(orders = []) {
   }, live[0].status);
 }
 
-// The single next step this waiter can take on a ticket. Anything already served, out for
-// delivery or closed has no floor action left, so no button is offered rather than one
-// that would only ever fail.
-function nextAction(order) {
-  switch (order.status) {
-    case "placed":    return { newStatus: "confirmed", label: "Confirm" };
-    case "confirmed": return { newStatus: "preparing", label: "Start prep" };
-    case "preparing": return { newStatus: "served",    label: "Mark served" };
-    case "ready":     return { newStatus: "served",    label: "Mark served" };
-    default:          return null;
-  }
-}
-
 function formatTime(value) {
   if (!value) return "—";
   return new Date(value).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
@@ -75,16 +51,16 @@ function StatusPill({ status }) {
     <span
       className={cn(
         "shrink-0 rounded-full px-3 py-1 text-xs font-bold",
-        STATUS_TONE[status] ?? "bg-[#F3F4F6] text-[#5F5F5F]",
+        STATUS_TONE[floorStatus(status)] ?? "bg-[#F3F4F6] text-[#5F5F5F]",
       )}
     >
-      {STATUS_LABEL[status] ?? String(status ?? "").replace(/_/g, " ")}
+      {floorStatusLabel(status)}
     </span>
   );
 }
 
 function RoundRow({ order, onAdvance, pending }) {
-  const action = nextAction(order);
+  const action = serveAction(order);
   const items = order.items ?? [];
   const qty = items.reduce((n, i) => n + (i.quantity ?? 0), 0);
 
@@ -121,11 +97,16 @@ function RoundRow({ order, onAdvance, pending }) {
       {action ? (
         <button
           type="button"
-          disabled={pending}
+          disabled={!action.enabled || pending}
+          title={action.enabled ? undefined : SERVE_BLOCKED_HINT}
           onClick={() => onAdvance(order, action.newStatus)}
           className={cn(
-            "mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white transition",
-            pending ? "bg-brand-orange/60" : "bg-brand-gradient hover:opacity-90",
+            "mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition",
+            !action.enabled
+              ? "cursor-not-allowed bg-brand-cream/50 text-muted-foreground"
+              : pending
+                ? "bg-brand-orange/60 text-white"
+                : "bg-brand-gradient text-white hover:opacity-90",
           )}
         >
           {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

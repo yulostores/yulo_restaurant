@@ -7,6 +7,18 @@
 // The floor now owns the last step of a ticket: PATCH …/waiter/orders/:id/status lets
 // this screen mark a round served once it reaches the table, which is reflected straight
 // away in the owner portal. Everything before that is still the kitchen's to drive.
+//
+// The chips across the top select ROUNDS, not tables (FLOOR_FILTERS in ./orderStatus.js):
+//
+//   All Orders     every open table, all of its rounds
+//   Preparing      rounds still with the kitchen — placed, accepted or on the stove
+//   Ready To Serve rounds the chef has marked ready: the tray waiting to be carried out
+//   Served         rounds already delivered to the table, bill not yet settled
+//   Completed      sittings settled today — read from ?scope=completed, since a paid
+//                  session has left the open floor entirely
+//
+// A table appears under a chip only if it has a round in that state, and shows just those
+// rounds; its running total and bill button still read the whole sitting.
 
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -26,51 +38,37 @@ import { useRestaurant } from "@/hooks/customer/useMenu";
 import BillDocument from "@/components/BillDocument";
 import QRScannerModal from "@/components/QRScannerModal";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import WaiterLayout, { formatPrice } from "./WaiterLayout";
 import { useWaiter } from "./WaiterApp";
+import {
+  FLOOR_FILTERS,
+  SERVE_BLOCKED_HINT,
+  billReadiness,
+  floorStatus,
+  floorStatusLabel,
+  isCompletedFilter,
+  matchesFloorFilter,
+  serveAction,
+} from "./orderStatus";
 
 const PAYMENT_METHODS = ["cash", "upi", "card", "online"];
 
-// Statuses a ticket can hold, as the kitchen reports them.
+// Keyed by the floor's reading of a ticket, not the kitchen's raw status — see
+// ./orderStatus.js for why 'confirmed' never surfaces here.
 const STATUS_TONE = {
-  placed:           "bg-brand-cream/50 text-muted-foreground",
-  confirmed:        "bg-[#E7F0FB] text-[#1565C0]",
   preparing:        "bg-brand-orange/10 text-brand-orange",
-  ready:            "bg-emerald-50 text-emerald-600",
+  prepared:         "bg-emerald-50 text-emerald-600",
   served:           "bg-emerald-50 text-emerald-700",
   out_for_delivery: "bg-[#FFF3E0] text-[#D9480F]",
   delivered:        "bg-[#F3F4F6] text-[#5F5F5F]",
   cancelled:        "bg-red-50 text-brand-maroon",
 };
 
-// The single next step the floor can take on a round. Nothing is offered once it has
-// been served or cancelled — there is no floor action left, and a button that could only
-// fail is worse than none.
-function nextAction(order) {
-  switch (order.status) {
-    case "placed":    return { newStatus: "confirmed", label: "Confirm" };
-    case "confirmed": return { newStatus: "preparing", label: "Start prep" };
-    case "preparing": return { newStatus: "served",    label: "Mark served" };
-    case "ready":     return { newStatus: "served",    label: "Mark served" };
-    default:          return null;
-  }
-}
-
 function roundTime(value) {
   if (!value) return null;
   return new Date(value).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-}
-
-const FILTERS = [
-  { value: "all",       label: "All Tables" },
-  { value: "active",    label: "Food Pending" },
-  { value: "ready",     label: "Ready To Serve" },
-  { value: "served",    label: "All Served" },
-];
-
-function statusLabel(status) {
-  return String(status ?? "").replace(/_/g, " ");
 }
 
 // Extract the tableId the scan endpoint wants from whatever the QR encodes.
@@ -89,15 +87,24 @@ function tableIdFromQr(raw) {
   return /^[a-f0-9]{24}$/i.test(value) ? value : null;
 }
 
-function sessionState(session) {
-  const orders = (session.orders ?? []).filter((o) => o.status !== "cancelled");
-  if (orders.length === 0) return "active";
-  if (orders.some((o) => o.status === "ready")) return "ready";
-  // 'served' is the dine-in terminal state the waiter sets; 'delivered' is kept for
-  // orders closed out before that state existed.
-  if (orders.every((o) => o.status === "served" || o.status === "delivered")) return "served";
-  return "active";
+// What the chips actually select. A filter keeps a table only if it has a round in that
+// state, and the card then shows just those rounds — so "Ready To Serve" is the tray to
+// carry out, not the tables that happen to have one. The running total and the bill
+// button keep reading the whole sitting, which is what they are about.
+function filterSessions(sessions, filter) {
+  if (filter === "all") return sessions.map((s) => ({ session: s, orders: s.orders ?? [] }));
+  return sessions
+    .map((s) => ({ session: s, orders: (s.orders ?? []).filter((o) => matchesFloorFilter(o, filter)) }))
+    .filter((row) => row.orders.length > 0);
 }
+
+// Said in the waiter's own terms, so an empty list reads as an answer rather than a fault.
+const EMPTY_FILTER_COPY = {
+  preparing: "Nothing with the kitchen right now.",
+  ready:     "Nothing on the pass — no round is waiting to be carried out.",
+  served:    "No round has been served yet at any open table.",
+  completed: "No table has been settled yet today.",
+};
 
 /* ── Bill panel for one session ── */
 // Renders the same bill document the owner console and the guest's own phone show
@@ -106,10 +113,15 @@ function sessionState(session) {
 // waiter and the guest must never be settling against two different readings of one bill.
 function BillPanel({ restaurantId, session, onClose }) {
   const sessionId = session._id;
-  const { data: bill, isLoading } = useSessionBill(restaurantId, sessionId);
+  const { data: bill, isLoading, error: billError } = useSessionBill(restaurantId, sessionId);
   const { mutateAsync: markPaid, isPending } = useMarkPaid(restaurantId);
   const [method, setMethod] = useState("cash");
   const [error, setError] = useState("");
+
+  // The server refuses to raise or settle a bill while a round is still with the kitchen
+  // (409 ORDERS_PENDING). The card's button is already inert in that case, so this only
+  // fires on a race — a round placed from another device while this panel was open.
+  const loadError = billError ? errorMessage(billError) : "";
 
   async function settle() {
     setError("");
@@ -117,7 +129,7 @@ function BillPanel({ restaurantId, session, onClose }) {
       await markPaid({ sessionId, paymentMethod: method });
       onClose();
     } catch (err) {
-      setError(err.message);
+      setError(errorMessage(err));
     }
   }
 
@@ -125,17 +137,19 @@ function BillPanel({ restaurantId, session, onClose }) {
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center">
       <div className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold">Bill</h2>
+          <h2 className="text-lg font-bold">Generate bill</h2>
           <button type="button" onClick={onClose} className="text-sm font-semibold text-muted-foreground">
             Close
           </button>
         </div>
 
-        {error ? (
-          <p className="mb-3 rounded-lg bg-[#FCE9E4] px-3 py-2 text-sm text-brand-maroon">{error}</p>
+        {error || loadError ? (
+          <p className="mb-3 rounded-lg bg-[#FCE9E4] px-3 py-2 text-sm text-brand-maroon">
+            {error || loadError}
+          </p>
         ) : null}
 
-        {isLoading || !bill ? (
+        {loadError ? null : isLoading || !bill ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Assembling bill…</p>
         ) : (
           <BillDocument
@@ -179,8 +193,19 @@ function BillPanel({ restaurantId, session, onClose }) {
 }
 
 /* ── One table session ── */
-function SessionCard({ session, tableLabel, onAddItems, onViewBill, onAdvance, pendingOrderId }) {
-  const orders = session.orders ?? [];
+// `orders` is what this filter selected, which can be a subset of the sitting's rounds;
+// `session` stays whole, because the total and the bill are about the sitting.
+// `settled` marks a closed sitting — nothing on it can move, so it carries no controls.
+function SessionCard({
+  session, tableLabel, orders, settled = false, onAddItems, onViewBill, onAdvance, pendingOrderId,
+}) {
+  const allRounds = session.orders ?? [];
+  const hidden = allRounds.length - orders.length;
+  // The bill is the last step of the sitting, not a mid-meal peek: until every round has
+  // been carried to the table the total can still move, so the button stays inert and says
+  // what is holding it. The server refuses the same call (409 ORDERS_PENDING) — this is the
+  // courtesy, not the enforcement.
+  const bill = billReadiness(session);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-brand-cream/60 bg-white shadow-sm">
@@ -190,8 +215,15 @@ function SessionCard({ session, tableLabel, onAddItems, onViewBill, onAdvance, p
             {tableLabel}
           </span>
           <span className="rounded-full bg-brand-orange/10 px-2.5 py-0.5 text-[10px] font-bold uppercase text-brand-orange">
-            {session.batchCount ?? orders.length} rounds
+            {hidden > 0
+              ? `${orders.length} of ${allRounds.length} rounds`
+              : `${session.batchCount ?? allRounds.length} rounds`}
           </span>
+          {settled ? (
+            <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700">
+              Paid
+            </span>
+          ) : null}
         </div>
         <span className="text-sm font-bold text-brand-red">
           {formatPrice(session.runningTotal)}
@@ -204,75 +236,107 @@ function SessionCard({ session, tableLabel, onAddItems, onViewBill, onAdvance, p
             Table is open with no orders yet.
           </p>
         ) : (
-          orders.map((o) => (
-            <div key={o._id} className="rounded-xl border border-brand-cream/50 p-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-muted-foreground">
-                  Round {o.round ?? o.batchNumber ?? "—"}
-                  {roundTime(o.createdAt) ? " · " + roundTime(o.createdAt) : ""}
-                  {" · #" + String(o._id).slice(-5).toUpperCase()}
-                </span>
-                <span
-                  className={cn(
-                    "rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase",
-                    STATUS_TONE[o.status] ?? "bg-brand-cream/50 text-muted-foreground",
-                  )}
-                >
-                  {statusLabel(o.status)}
-                </span>
-              </div>
-              <div className="space-y-1">
-                {(o.items ?? []).map((item, i) => (
-                  <p key={item.menuItemId ?? i} className="text-sm text-[#5a403e]">
-                    {item.quantity} × {item.name}
-                  </p>
-                ))}
-              </div>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                Taken by{" "}
-                {o.staff?.name ??
-                  (o.placedBy === "guest" ? "the guest (table QR)" : "the customer app")}
-              </p>
-              {nextAction(o) ? (
-                <button
-                  type="button"
-                  disabled={pendingOrderId === o._id}
-                  onClick={() => onAdvance(o, nextAction(o).newStatus)}
-                  className={cn(
-                    "mt-2.5 w-full rounded-lg py-2 text-xs font-bold text-white transition",
-                    pendingOrderId === o._id
-                      ? "bg-brand-orange/60"
-                      : "bg-brand-gradient hover:brightness-105",
-                  )}
-                >
-                  {pendingOrderId === o._id ? "Updating…" : nextAction(o).label}
-                </button>
-              ) : null}
-              {o.specialInstructions ? (
-                <p className="mt-2 text-xs italic text-muted-foreground">
-                  “{o.specialInstructions}”
+          orders.map((o) => {
+            const action = serveAction(o);
+            return (
+              <div key={o._id} className="rounded-xl border border-brand-cream/50 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-muted-foreground">
+                    Round {o.round ?? o.batchNumber ?? "—"}
+                    {roundTime(o.createdAt) ? " · " + roundTime(o.createdAt) : ""}
+                    {" · #" + String(o._id).slice(-5).toUpperCase()}
+                  </span>
+                  <span
+                    className={cn(
+                      "rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase",
+                      STATUS_TONE[floorStatus(o.status)] ?? "bg-brand-cream/50 text-muted-foreground",
+                    )}
+                  >
+                    {floorStatusLabel(o.status)}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {(o.items ?? []).map((item, i) => (
+                    <p key={item.menuItemId ?? i} className="text-sm text-[#5a403e]">
+                      {item.quantity} × {item.name}
+                    </p>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  Taken by{" "}
+                  {o.staff?.name ??
+                    (o.placedBy === "guest" ? "the guest (table QR)" : "the customer app")}
                 </p>
-              ) : null}
-            </div>
-          ))
+                {action && !settled ? (
+                  <button
+                    type="button"
+                    disabled={!action.enabled || pendingOrderId === o._id}
+                    title={action.enabled ? undefined : SERVE_BLOCKED_HINT}
+                    onClick={() => onAdvance(o, action.newStatus)}
+                    className={cn(
+                      "mt-2.5 w-full rounded-lg py-2 text-xs font-bold transition",
+                      !action.enabled
+                        ? "cursor-not-allowed bg-brand-cream/50 text-muted-foreground"
+                        : pendingOrderId === o._id
+                          ? "bg-brand-orange/60 text-white"
+                          : "bg-brand-gradient text-white hover:brightness-105",
+                    )}
+                  >
+                    {pendingOrderId === o._id ? "Updating…" : action.label}
+                  </button>
+                ) : null}
+                {o.specialInstructions ? (
+                  <p className="mt-2 text-xs italic text-muted-foreground">
+                    “{o.specialInstructions}”
+                  </p>
+                ) : null}
+              </div>
+            );
+          })
         )}
       </div>
 
-      <div className="flex gap-2 border-t border-brand-cream/40 px-5 py-3">
-        <button
-          type="button"
-          onClick={onAddItems}
-          className="flex-1 rounded-xl border border-brand-cream bg-white py-2.5 text-sm font-bold text-[#24190f] hover:bg-brand-cream/20"
-        >
-          Add items
-        </button>
-        <button
-          type="button"
-          onClick={onViewBill}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-gradient py-2.5 text-sm font-bold text-white hover:brightness-105"
-        >
-          <ReceiptText className="h-4 w-4" /> Bill
-        </button>
+      <div className="border-t border-brand-cream/40 px-5 py-3">
+        {settled ? (
+          <p className="text-center text-xs text-muted-foreground">
+            Settled{session.payment?.method ? ` by ${session.payment.method}` : ""}
+            {roundTime(session.payment?.paidAt ?? session.closedAt)
+              ? ` at ${roundTime(session.payment?.paidAt ?? session.closedAt)}`
+              : ""}
+            {session.payment?.total != null ? ` · ${formatPrice(session.payment.total)}` : ""}
+          </p>
+        ) : (
+          <>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onAddItems}
+              className="flex-1 rounded-xl border border-brand-cream bg-white py-2.5 text-sm font-bold text-[#24190f] hover:bg-brand-cream/20"
+            >
+              Add items
+            </button>
+            <button
+              type="button"
+              onClick={onViewBill}
+              disabled={!bill.ready}
+              title={bill.ready ? undefined : bill.reason}
+              className={cn(
+                "flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-bold transition",
+                bill.ready
+                  ? "bg-brand-gradient text-white hover:brightness-105"
+                  : "cursor-not-allowed bg-brand-cream/60 text-muted-foreground",
+              )}
+            >
+              <ReceiptText className="h-4 w-4" /> Generate bill
+            </button>
+          </div>
+          {bill.ready ? null : (
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              {bill.reason} — the bill can be generated once every round is served.
+            </p>
+          )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -305,12 +369,23 @@ export default function WaiterDashboard() {
   const [billSession, setBillSession] = useState(null);
   const [actionError, setActionError] = useState("");
 
-  const { data: sessions = [], isLoading, error: sessionsErr } = useWaiterSessions(restaurantId);
+  // Two reads of one endpoint: the live floor, always polled, and — only while the
+  // Completed chip is selected — the sittings settled since midnight, which the open-floor
+  // query can't contain because a settled sitting is closed.
+  const completedView = isCompletedFilter(filter);
+  const { data: openSessions = [], isLoading, error: sessionsErr } = useWaiterSessions(restaurantId);
+  const {
+    data: doneSessions = [],
+    isLoading: loadingDone,
+    error: doneErr,
+  } = useWaiterSessions(restaurantId, "completed", { enabled: completedView });
+
+  const sessions = completedView ? doneSessions : openSessions;
   const { data: tables = [] } = useWaiterTables(restaurantId);
   const { data: restaurant } = useRestaurant(restaurantId);
   const { mutateAsync: scanTable, isPending: scanning } = useScanTable(restaurantId);
 
-  const error = actionError || sessionsErr?.message || "";
+  const error = actionError || sessionsErr?.message || (completedView ? doneErr?.message : "") || "";
 
   // Sessions reference a tableId; resolve the human identifier from the roster.
   const tableLabelById = useMemo(
@@ -318,10 +393,12 @@ export default function WaiterDashboard() {
     [tables],
   );
 
-  const visible = useMemo(() => {
-    if (filter === "all") return sessions;
-    return sessions.filter((s) => sessionState(s) === filter);
-  }, [sessions, filter]);
+  // A settled sitting is shown whole — its rounds are all served, so there is nothing to
+  // narrow to.
+  const visible = useMemo(
+    () => filterSessions(sessions, completedView ? "all" : filter),
+    [sessions, filter, completedView],
+  );
 
   async function handleQRScan(raw) {
     setActionError("");
@@ -404,7 +481,7 @@ export default function WaiterDashboard() {
 
         {/* Filters */}
         <div className="mb-4 flex gap-1.5 overflow-x-auto pb-1">
-          {FILTERS.map((f) => (
+          {FLOOR_FILTERS.map((f) => (
             <button
               key={f.value}
               type="button"
@@ -427,10 +504,12 @@ export default function WaiterDashboard() {
 
         {/* Sessions */}
         <div className="space-y-4">
-          {visible.map((session) => (
+          {visible.map(({ session, orders }) => (
             <SessionCard
               key={session._id}
               session={session}
+              orders={orders}
+              settled={completedView}
               tableLabel={
                 session.tableNumber
                   ? "Table " + session.tableNumber
@@ -444,11 +523,11 @@ export default function WaiterDashboard() {
           ))}
           {visible.length === 0 ? (
             <div className="rounded-2xl border border-brand-cream/60 bg-white py-12 text-center text-sm text-muted-foreground">
-              {isLoading
+              {(completedView ? loadingDone : isLoading)
                 ? "Loading tables…"
-                : sessions.length === 0
+                : !completedView && openSessions.length === 0
                   ? "No open tables. Scan a table QR to seat a guest."
-                  : "No tables match this filter."}
+                  : EMPTY_FILTER_COPY[filter] ?? "Nothing to show here."}
             </div>
           ) : null}
         </div>

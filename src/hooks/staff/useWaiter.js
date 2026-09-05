@@ -2,20 +2,27 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { staffApi } from "@/api/staff.api";
 
 export const waiterKeys = {
-  sessions: (rId) => ["waiter", rId, "sessions"],
+  // Scoped, because the open floor and the day's settled sittings are two different
+  // reads of the same endpoint and must not overwrite each other in the cache.
+  sessions:    (rId, scope = "open") => ["waiter", rId, "sessions", scope],
+  allSessions: (rId) => ["waiter", rId, "sessions"],
   menu:     (rId) => ["waiter", rId, "menu"],
   tables:   (rId) => ["waiter", rId, "tables"],
   bill:     (rId, sessionId) => ["waiter", rId, "bill", sessionId],
 };
 
-// ── Open table sessions, each with its orders and a runningTotal ─────
-export function useWaiterSessions(restaurantId) {
+// ── Table sessions, each with its orders and a runningTotal ──────────
+// scope "open" is the live floor; "completed" is today's settled sittings, which the
+// dashboard's Completed filter reads. A closed sitting can't change, so that scope isn't
+// polled — only `enabled` callers pay for it at all.
+export function useWaiterSessions(restaurantId, scope = "open", options = {}) {
+  const enabled = (options.enabled ?? true) && !!restaurantId;
   return useQuery({
-    queryKey: waiterKeys.sessions(restaurantId),
-    queryFn: () => staffApi.getSessions(restaurantId).then((r) => r.data.data.sessions ?? []),
-    enabled: !!restaurantId,
-    refetchInterval: 15_000,
-    staleTime: 0,
+    queryKey: waiterKeys.sessions(restaurantId, scope),
+    queryFn: () => staffApi.getSessions(restaurantId, scope).then((r) => r.data.data.sessions ?? []),
+    enabled,
+    refetchInterval: scope === "open" ? 15_000 : false,
+    staleTime: scope === "open" ? 0 : 30_000,
   });
 }
 
@@ -41,12 +48,16 @@ export function useWaiterTables(restaurantId) {
 }
 
 // ── Bill for a session (idempotent — safe to call repeatedly) ────────
+// The server refuses to raise the bill while a round is still unserved (409
+// ORDERS_PENDING). That's a rule, not a blip — retrying it just delays the message the
+// waiter needs, so 4xx answers are taken at their word.
 export function useSessionBill(restaurantId, sessionId) {
   return useQuery({
     queryKey: waiterKeys.bill(restaurantId, sessionId),
     queryFn: () => staffApi.getBill(restaurantId, sessionId).then((r) => r.data.data.bill),
     enabled: !!restaurantId && !!sessionId,
     staleTime: 30_000,
+    retry: (count, err) => (err?.status >= 400 && err?.status < 500 ? false : count < 1),
   });
 }
 
@@ -58,7 +69,7 @@ export function useCreateOrder(restaurantId) {
   return useMutation({
     mutationFn: (body) => staffApi.createOrder(restaurantId, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: waiterKeys.sessions(restaurantId) });
+      qc.invalidateQueries({ queryKey: waiterKeys.allSessions(restaurantId) });
       qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
     },
   });
@@ -72,7 +83,7 @@ export function useMarkPaid(restaurantId) {
     mutationFn: ({ sessionId, paymentMethod }) =>
       staffApi.markPaid(restaurantId, sessionId, paymentMethod),
     onSuccess: (_data, { sessionId }) => {
-      qc.invalidateQueries({ queryKey: waiterKeys.sessions(restaurantId) });
+      qc.invalidateQueries({ queryKey: waiterKeys.allSessions(restaurantId) });
       qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
       qc.invalidateQueries({ queryKey: waiterKeys.bill(restaurantId, sessionId) });
     },
@@ -90,7 +101,7 @@ export function useUpdateOrderStatus(restaurantId) {
     mutationFn: ({ orderId, newStatus }) =>
       staffApi.waiterUpdateOrderStatus(restaurantId, orderId, newStatus),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: waiterKeys.sessions(restaurantId) });
+      qc.invalidateQueries({ queryKey: waiterKeys.allSessions(restaurantId) });
       qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
     },
   });
@@ -102,7 +113,7 @@ export function useScanTable(restaurantId) {
   return useMutation({
     mutationFn: (qrToken) => staffApi.scanTable(restaurantId, qrToken),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: waiterKeys.sessions(restaurantId) });
+      qc.invalidateQueries({ queryKey: waiterKeys.allSessions(restaurantId) });
       qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
     },
   });

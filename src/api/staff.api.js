@@ -77,8 +77,9 @@ export const staffApi = {
 
   // Open table sessions with their orders and a runningTotal. Each session also
   // carries its `tableNumber`, and each order its `round` and `staff`.
-  getSessions: (restaurantId) =>
-    client.get(`/staff/${restaurantId}/waiter/sessions`, S),
+  // scope: "open" (the live floor) | "completed" (today's settled sittings).
+  getSessions: (restaurantId, scope = "open") =>
+    client.get(`/staff/${restaurantId}/waiter/sessions`, { ...S, params: { scope } }),
 
   getBill: (restaurantId, sessionId) =>
     client.get(`/staff/${restaurantId}/waiter/sessions/${sessionId}/bill`, S),
