@@ -81,6 +81,13 @@ function RoundRow({ order, onAdvance, pending }) {
             Taken by{" "}
             {order.staff?.name ??
               (order.placedBy === "guest" ? "the guest (table QR)" : "the customer app")}
+            {/* Who the round is for. On the floor this is what lets a waiter address the
+                table by name and match a phone number to a sitting — the order carries it
+                now (services/orderView.service.js), for a QR guest as well as an app
+                customer. */}
+            {order.customer?.name || order.customer?.phone
+              ? ` · for ${[order.customer.name, order.customer.phone].filter(Boolean).join(" · ")}`
+              : ""}
           </p>
           {order.specialInstructions ? (
             <p className="mt-1 text-xs italic text-muted-foreground">

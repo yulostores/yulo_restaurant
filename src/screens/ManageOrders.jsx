@@ -25,7 +25,7 @@ import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { useOrdersByTable, useOwnerOrdersPage } from "@/hooks/owner/useOrders";
 import DashboardLayout from "@/components/DashboardLayout";
 import OrderDetailsDialog, {
-  formatDateTime, formatPrice, formatTime, orderCode, placedByLabel,
+  customerLabel, formatDateTime, formatPrice, formatTime, orderCode, placedByLabel,
   statusLabel, statusVariant,
 } from "@/components/OrderDetailsDialog";
 import { Badge } from "@/components/ui/badge";
@@ -86,8 +86,14 @@ function RoundRow({ order, onView }) {
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">{itemSummary(order.items)}</p>
         <p className="text-xs text-muted-foreground">
-          {itemCount(order.items)} {itemCount(order.items) === 1 ? "item" : "items"} ·{" "}
-          {orderCode(order)} · {placedByLabel(order)}
+          {[
+            `${itemCount(order.items)} ${itemCount(order.items) === 1 ? "item" : "items"}`,
+            orderCode(order),
+            placedByLabel(order),
+            customerLabel(order),
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </p>
       </div>
 
@@ -148,6 +154,13 @@ function TableGroup({ group, expanded, onToggle, onView, onViewBill }) {
               {session.guestCount} {session.guestCount === 1 ? "guest" : "guests"}
             </span>
           ) : null}
+          {/* Whose table this is. A sitting is one party, so the name belongs on the table
+              row itself rather than being repeated on every round underneath it. */}
+          {session?.customer?.name || session?.customer?.phone ? (
+            <span className="truncate">
+              {[session.customer.name, session.customer.phone].filter(Boolean).join(" · ")}
+            </span>
+          ) : null}
           {staffNames.length > 0 ? (
             <span className="truncate">Served by {staffNames.join(", ")}</span>
           ) : (
@@ -195,6 +208,13 @@ function TableGroup({ group, expanded, onToggle, onView, onViewBill }) {
                   {sitting.waiter?.name ? (
                     <span className="text-xs text-muted-foreground">
                       · waiter {sitting.waiter.name}
+                    </span>
+                  ) : null}
+                  {/* Each sitting is a different party, so an earlier one on the same
+                      table is a different customer — named per sitting, not per table. */}
+                  {sitting.customer?.name || sitting.customer?.phone ? (
+                    <span className="truncate text-xs text-muted-foreground">
+                      · {[sitting.customer.name, sitting.customer.phone].filter(Boolean).join(" · ")}
                     </span>
                   ) : null}
                   <span className="ml-auto text-xs font-semibold text-[#5a403e]">
@@ -253,6 +273,11 @@ function OrderRow({ order, onView, onViewBill }) {
         {(order.type ?? "").replace("_", " ") || "—"}
       </TableCell>
       <TableCell className="max-w-[220px] truncate">{itemSummary(order.items)}</TableCell>
+      {/* The column this screen was missing entirely: an order's history showed what was
+          ordered and who rang it in, but never who it was for. */}
+      <TableCell className="max-w-[180px] truncate text-muted-foreground">
+        {customerLabel(order) ?? "—"}
+      </TableCell>
       <TableCell className="text-muted-foreground">{placedByLabel(order)}</TableCell>
       <TableCell className="text-muted-foreground">{formatDateTime(order.createdAt)}</TableCell>
       <TableCell>
@@ -403,7 +428,7 @@ export default function ManageOrders() {
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Table, item, staff or order id…"
+                placeholder="Table, customer, item, staff or order id…"
                 className="w-64 pl-9"
               />
             </div>
@@ -502,6 +527,7 @@ export default function ManageOrders() {
                       <TableHead>Table</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead>Items</TableHead>
+                      <TableHead>Customer</TableHead>
                       <TableHead>Taken by</TableHead>
                       <TableHead>Placed</TableHead>
                       <TableHead>Status</TableHead>
@@ -520,7 +546,7 @@ export default function ManageOrders() {
                     ))}
                     {visible.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                        <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
                           {flat.isLoading ? "Loading orders…" : "No orders match these filters."}
                         </TableCell>
                       </TableRow>

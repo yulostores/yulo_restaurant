@@ -10,7 +10,7 @@ import { Search } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import OrderDetailsDialog, {
-  formatDateTime, formatPrice, orderCode, placedByLabel, statusLabel, statusVariant,
+  customerLabel, formatDateTime, formatPrice, orderCode, placedByLabel, statusLabel, statusVariant,
 } from "@/components/OrderDetailsDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -181,8 +181,11 @@ export default function ManagerOrders() {
                     <TableCell className="max-w-[240px] truncate">
                       {(o.items ?? []).map((i) => `${i.quantity}× ${i.name}`).join(", ") || "—"}
                     </TableCell>
-                    <TableCell className="max-w-[150px] truncate text-muted-foreground">
-                      {placedByLabel(o)}
+                    <TableCell className="max-w-[150px] text-muted-foreground">
+                      <span className="block truncate">{placedByLabel(o)}</span>
+                      {customerLabel(o) ? (
+                        <span className="block truncate text-xs">{customerLabel(o)}</span>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatDateTime(o.createdAt)}

@@ -66,6 +66,11 @@ export default function Cart() {
           state: address.state,
           pincode: address.pincode,
           coordinates: address.location?.coordinates,
+          // Carried through when the saved address names its own recipient. Omitted
+          // otherwise — the server fills both from the ordering account, and sending
+          // empty strings would overwrite that fallback with nothing.
+          ...(address.contactName ? { contactName: address.contactName } : {}),
+          ...(address.contactPhone ? { contactPhone: address.contactPhone } : {}),
         },
         ...(instructions.trim() ? { specialInstructions: instructions.trim() } : {}),
       });

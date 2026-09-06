@@ -11,7 +11,7 @@ import { Flame, Star } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import OrderDetailsDialog, {
-  orderCode, placedByLabel, statusLabel, statusVariant,
+  customerLabel, orderCode, placedByLabel, statusLabel, statusVariant,
 } from "@/components/OrderDetailsDialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -292,8 +292,11 @@ export default function ManagerDashboard() {
                       {(o.type ?? "").replace("_", " ") || "—"}
                     </TableCell>
                     <TableCell className="max-w-[220px] truncate">{itemSummary(o)}</TableCell>
-                    <TableCell className="max-w-[150px] truncate text-muted-foreground">
-                      {placedByLabel(o)}
+                    <TableCell className="max-w-[150px] text-muted-foreground">
+                      <span className="block truncate">{placedByLabel(o)}</span>
+                      {customerLabel(o) ? (
+                        <span className="block truncate text-xs">{customerLabel(o)}</span>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(o.status)}>{statusLabel(o.status)}</Badge>
@@ -375,7 +378,7 @@ export default function ManagerDashboard() {
                     {itemSummary(order)}
                   </span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {placedByLabel(order)}
+                    {[placedByLabel(order), customerLabel(order)].filter(Boolean).join(" · ")}
                   </span>
                 </div>
                 <Badge variant={statusVariant(order.status)} className="shrink-0">

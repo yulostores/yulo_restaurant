@@ -23,6 +23,10 @@ function normalizeOrder(o) {
     sessionId:    o.tableSessionId ? String(o.tableSessionId) : null,
     tableNumber:  o.tableNumber ?? null,
     staffName:    o.staff?.name ?? null,
+    // A dine-in ticket is identified by its table, but a delivery ticket had nothing on
+    // it at all — every one read simply "Delivery", so two bags on the pass were
+    // indistinguishable. The server resolves this for older orders too (enrichOrders).
+    customerName: o.customer?.name ?? o.customerName ?? null,
     orderType:    o.type ?? "dine_in",
     items:        (o.items ?? []).map((i) => ({ ...i, title: i.name })),
     status:       o.status,
@@ -40,7 +44,9 @@ function waitingMinutes(order) {
 }
 
 function orderLabel(order) {
-  if (order.orderType === "delivery") return "Delivery";
+  if (order.orderType === "delivery") {
+    return order.customerName ? `Delivery · ${order.customerName}` : "Delivery";
+  }
   if (order.tableNumber) {
     const base = `Table ${order.tableNumber}`;
     const round = order.batchNumber ? ` · Round ${order.batchNumber}` : "";

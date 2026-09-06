@@ -76,6 +76,26 @@ export function placedByLabel(order) {
   return "—";
 }
 
+// "Priya Sharma · 9876543210", or "Guest" when a walk-in gave nothing. The one line that
+// answers "whose order is this", which no order screen could answer at all before the API
+// started resolving it (services/orderView.service.js's enrichOrders).
+//
+// Deliberately distinct from placedByLabel above: that says which DOOR the order came
+// through (waiter / table QR / app), this says WHO it is for. A waiter-placed order has a
+// customer too, and an app order placed by the customer themselves still needs naming.
+export function customerLabel(order) {
+  const customer = order?.customer;
+  const name = customer?.name ?? order?.customerName ?? null;
+  const phone = customer?.phone ?? order?.customerPhone ?? null;
+
+  if (name && phone) return `${name} · ${phone}`;
+  if (name) return name;
+  if (phone) return phone;
+  // A dine-in walk-in who ordered without giving details is genuinely anonymous — say so
+  // plainly rather than showing an em dash that reads as missing data.
+  return order?.type === "dine_in" ? "Walk-in guest" : null;
+}
+
 export function orderCode(order) {
   return `#${String(order?._id ?? "").slice(-6).toUpperCase()}`;
 }
@@ -185,6 +205,7 @@ export default function OrderDetailsDialog({ order, onClose }) {
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <div className="grid gap-4 sm:grid-cols-3">
             <Field label="Table">{order.tableNumber ? `Table ${order.tableNumber}` : "—"}</Field>
+            <Field label="Customer">{customerLabel(order)}</Field>
             <Field label="Taken by">{placedByLabel(order)}</Field>
             <Field label="Table waiter">{order.waiter?.name ?? "Not assigned"}</Field>
             <Field label="Round">{order.round ?? order.batchNumber ?? "—"}</Field>
@@ -250,10 +271,27 @@ export default function OrderDetailsDialog({ order, onClose }) {
                 Delivery address
               </p>
               <p className="text-sm text-muted-foreground">
-                {[order.deliveryAddress.street, order.deliveryAddress.city]
+                {/* The whole postal address, not just street and city — the PIN is what a
+                    delivery partner navigates by, and the order now carries it. */}
+                {[
+                  order.deliveryAddress.street,
+                  order.deliveryAddress.city,
+                  order.deliveryAddress.state,
+                  order.deliveryAddress.pincode,
+                ]
                   .filter(Boolean)
                   .join(", ")}
               </p>
+              {/* Who is at the door, when that isn't the account holder — an order sent to
+                  a parent's house reaches a different person than the one who paid. */}
+              {order.deliveryAddress.contactName || order.deliveryAddress.contactPhone ? (
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Hand to{" "}
+                  {[order.deliveryAddress.contactName, order.deliveryAddress.contactPhone]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              ) : null}
             </div>
           ) : null}
 

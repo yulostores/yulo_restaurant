@@ -21,7 +21,7 @@ import { useLiveStats } from "@/hooks/owner/useLiveMonitor";
 import { useSettings } from "@/hooks/owner/useSettings";
 import DashboardLayout from "@/components/DashboardLayout";
 import OrderDetailsDialog, {
-  formatPrice, orderCode, placedByLabel, statusLabel, statusVariant,
+  customerLabel, formatPrice, orderCode, placedByLabel, statusLabel, statusVariant,
 } from "@/components/OrderDetailsDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -394,8 +394,15 @@ export default function OwnerDashboard() {
                       <TableCell className="max-w-[220px] truncate">
                         {(o.items ?? []).map((i) => `${i.quantity}× ${i.name}`).join(", ") || "—"}
                       </TableCell>
-                      <TableCell className="max-w-[150px] truncate text-muted-foreground">
-                        {placedByLabel(o)}
+                      {/* Both halves of "who": which door the order came through, and the
+                          customer it's for. Stacked rather than given a column of their
+                          own — this is a live feed, and a tenth column would cost the
+                          items summary the width it needs to be readable. */}
+                      <TableCell className="max-w-[150px] text-muted-foreground">
+                        <span className="block truncate">{placedByLabel(o)}</span>
+                        {customerLabel(o) ? (
+                          <span className="block truncate text-xs">{customerLabel(o)}</span>
+                        ) : null}
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(o.status)}>{statusLabel(o.status)}</Badge>
