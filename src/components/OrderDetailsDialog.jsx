@@ -154,7 +154,7 @@ function Timeline({ history, currentStatus }) {
   );
 }
 
-export default function OrderDetailsDialog({ order, onClose }) {
+export default function OrderDetailsDialog({ order, onClose, action }) {
   if (!order) return null;
 
   const items = order.items ?? [];
@@ -302,6 +302,21 @@ export default function OrderDetailsDialog({ order, onClose }) {
             <Timeline history={order.statusHistory} currentStatus={order.status} />
           </div>
         </div>
+
+        {/* Optional quick action (e.g. Kitchen Display's "Mark as Ready") — omitted by every
+            other caller of this dialog, which stays read-only on status by design. */}
+        {action ? (
+          <div className="border-t border-brand-cream/60 px-5 py-4">
+            <button
+              type="button"
+              disabled={action.busy}
+              onClick={action.onClick}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-gradient py-3 text-sm font-bold text-white transition hover:brightness-105 disabled:opacity-60"
+            >
+              {action.busy ? "Updating…" : action.label}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

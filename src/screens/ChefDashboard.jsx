@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, ChefHat, Eye, LogOut, X } from "lucide-react";
+import { Eye, LogOut } from "lucide-react";
 
 import { useStaffAuth } from "@/context/StaffAuthContext";
 import { useKitchenQueue, useKitchenBoard, useUpdateOrderStatus } from "@/hooks/staff/useKitchen";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import OrderDetailsDialog from "@/components/OrderDetailsDialog";
 import { cn } from "@/lib/utils";
 
 /* ── Normalize backend Order → UI shape ──────────────────────────────
@@ -33,6 +34,9 @@ function normalizeOrder(o) {
     instructions: o.specialInstructions ?? "",
     createdAt:    o.createdAt ?? null,
     batches:      null,
+    // Full enriched order (customer, staff, statusHistory, deliveryAddress, subtotal, ...)
+    // for the shared OrderDetailsDialog — the fields above are just the board-card summary.
+    raw:          o,
   };
 }
 
@@ -103,140 +107,6 @@ function UpcomingCard({ order, onAdvance }) {
         {label}
       </button>
     </div>
-  );
-}
-
-function toBatches(items, size = 3) {
-  const out = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
-/* ── Order details drawer ── */
-function OrderDetailsDrawer({ order, onClose, onMarkReady }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setOpen(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
-
-  const batches = order.batches ?? toBatches(order.items);
-  const status = statusOf(order);
-  const take = isTakeaway(order);
-  const tableLabel = orderLabel(order);
-  const modeLabel = take ? "Delivery" : "Dine-In";
-
-  async function handleMarkReady() {
-    setBusy(true);
-    await onMarkReady(order, "ready");
-    setBusy(false);
-    onClose();
-  }
-
-  return (
-    <>
-      <div
-        className={cn(
-          "fixed inset-0 z-40 bg-black/10 transition-opacity duration-300",
-          open ? "opacity-100" : "opacity-0",
-        )}
-        onClick={onClose}
-      />
-      <div
-        className={cn(
-          "fixed right-0 top-0 z-50 flex h-full w-full flex-col bg-white shadow-2xl transition-transform duration-300 ease-in-out sm:w-[400px]",
-          open ? "translate-x-0" : "translate-x-full",
-        )}
-      >
-        <div className="flex items-start justify-between border-b border-brand-cream/60 px-6 py-5">
-          <div>
-            <p className="text-lg font-bold text-[#24190f]">
-              Order #{order.number}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {tableLabel} &bull; {modeLabel}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1 text-muted-foreground hover:bg-brand-cream/30 hover:text-[#24190f]"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-          {batches.map((batch, bIdx) => {
-            const isLast = bIdx === batches.length - 1;
-            const batchDone =
-              !isLast || status === "ready" || status === "served" || status === "delivered";
-            return (
-              <div key={bIdx}>
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-                    Batch {bIdx + 1}
-                  </p>
-                  {batchDone ? (
-                    <span className="text-[11px] font-bold text-emerald-600">Prepared</span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-[11px] font-bold text-brand-orange">
-                      <span className="h-1.5 w-1.5 rounded-full bg-brand-orange" />
-                      Preparing
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-2.5">
-                  {batch.map((item, iIdx) => (
-                    <div key={iIdx} className="flex items-center justify-between text-sm">
-                      <span className="text-[#24190f]">
-                        <span className="font-bold">{item.quantity}x</span> {item.title}
-                      </span>
-                      {item.price != null && (
-                        <span className="font-semibold text-[#24190f]">
-                          ₹{item.price * item.quantity}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                {bIdx < batches.length - 1 && (
-                  <div className="mt-4 border-b border-brand-cream/50" />
-                )}
-              </div>
-            );
-          })}
-
-          {order.instructions && (
-            <div className="rounded-2xl border border-brand-orange/20 bg-[#FFF5EE] p-4">
-              <div className="mb-2 flex items-center gap-2">
-                <ChefHat className="h-4 w-4 text-brand-orange" />
-                <p className="text-sm font-bold text-[#24190f]">Special Instructions</p>
-              </div>
-              <p className="text-sm italic leading-relaxed text-[#5a403e]">
-                {order.instructions}
-              </p>
-            </div>
-          )}
-        </div>
-
-        {status === "preparing" && (
-          <div className="border-t border-brand-cream/60 px-6 py-4">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={handleMarkReady}
-              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-gradient py-3.5 text-base font-bold text-white transition hover:brightness-105 disabled:opacity-60"
-            >
-              <CheckCircle2 className="h-5 w-5" />
-              {busy ? "Updating…" : "Mark as Ready"}
-            </button>
-          </div>
-        )}
-      </div>
-    </>
   );
 }
 
@@ -331,14 +201,14 @@ function BoardCard({ order, column, onAction, onViewDetails }) {
           <button
             type="button"
             disabled={busy}
-            onClick={() => act(order.orderType === "dine_in" ? "served" : "delivered")}
+            onClick={() => act(order.orderType === "dine_in" ? "served" : "out_for_delivery")}
             className="w-full rounded-xl border border-emerald-300 bg-emerald-50 py-2.5 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
           >
             {busy
               ? "Updating…"
               : order.orderType === "dine_in"
                 ? "Handed to Waiter"
-                : "Handed Over"}
+                : "Out for Delivery"}
           </button>
           <button type="button" onClick={() => onViewDetails(order)} className="flex w-full items-center justify-center gap-1.5 py-1 text-sm text-muted-foreground hover:text-[#24190f]">
             <Eye className="h-3.5 w-3.5" /> View Details
@@ -419,6 +289,7 @@ export default function ChefDashboard() {
   const { staff, logout } = useStaffAuth();
   const restaurantId = staff?.restaurantId;
   const [viewOrder, setViewOrder] = useState(null);
+  const [markReadyBusy, setMarkReadyBusy] = useState(false);
 
   async function handleLogout() {
     await logout();
@@ -443,6 +314,14 @@ export default function ChefDashboard() {
   // status we currently see so it can reject a stale write (409).
   function advance(order, newStatus) {
     updateStatus({ orderId: order.id, currentStatus: order.status, newStatus });
+  }
+
+  async function handleMarkReadyFromDialog() {
+    if (!viewOrder) return;
+    setMarkReadyBusy(true);
+    advance(viewOrder, "ready");
+    setMarkReadyBusy(false);
+    setViewOrder(null);
   }
 
   return (
@@ -561,10 +440,14 @@ export default function ChefDashboard() {
       </div>
 
       {viewOrder && (
-        <OrderDetailsDrawer
-          order={viewOrder}
+        <OrderDetailsDialog
+          order={viewOrder.raw}
           onClose={() => setViewOrder(null)}
-          onMarkReady={advance}
+          action={
+            statusOf(viewOrder) === "preparing"
+              ? { label: "Mark as Ready", onClick: handleMarkReadyFromDialog, busy: markReadyBusy }
+              : undefined
+          }
         />
       )}
     </div>
