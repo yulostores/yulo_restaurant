@@ -6,7 +6,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { OwnerAuthProvider } from "./context/OwnerAuthContext";
 import { StaffAuthProvider } from "./context/StaffAuthContext";
 import { CustomerAuthProvider } from "./context/CustomerAuthContext";
-import { AdminAuthProvider } from "./context/AdminAuthContext";
 import App from "./App";
 import "./index.css";
 import "./styles.css";
@@ -27,9 +26,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <OwnerAuthProvider>
           <StaffAuthProvider>
             <CustomerAuthProvider>
-              <AdminAuthProvider>
-                <App />
-              </AdminAuthProvider>
+              <App />
             </CustomerAuthProvider>
           </StaffAuthProvider>
         </OwnerAuthProvider>

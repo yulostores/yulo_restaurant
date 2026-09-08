@@ -3,20 +3,20 @@ import { API_BASE } from "./config";
 
 // One session per portal, kept apart end to end.
 //
-// The owner portal and the customer QR app are served from the same origin, and
-// the super admin portal from a sibling port that shares the browser cookie jar.
-// A single access-token slot meant whichever provider refreshed last won, and
-// the owner screens went out carrying a customer token. Each portal keeps its
-// own token here, and asks the server for its own refresh cookie (?portal=, see
-// server/utils/refreshCookie.js).
+// The owner portal and the customer QR app are served from the same origin and
+// share the browser cookie jar. A single access-token slot meant whichever
+// provider refreshed last won, and the owner screens went out carrying a
+// customer token. Each portal keeps its own token here, and asks the server for
+// its own refresh cookie (?portal=, see server/utils/refreshCookie.js). The
+// platform admin portal is a separate app (yulo_super_admin) with its own client.
 //
 // Access tokens live in memory only — never localStorage.
 // The staff token is the exception: it goes to localStorage so it survives tab
 // closes and mobile browser background kills (waiters and chefs work long shifts
 // and refresh the page often).
-export const PORTALS = ["owner", "customer", "admin"];
+export const PORTALS = ["owner", "customer"];
 
-const _tokens = { owner: null, customer: null, admin: null };
+const _tokens = { owner: null, customer: null };
 let _staffToken = null;
 
 export function assertPortal(portal) {
@@ -55,7 +55,6 @@ export function portalForRequest(config) {
   if (config._portal) return assertPortal(config._portal);
   const url = config.url ?? "";
   if (url.startsWith("/owner")) return "owner";
-  if (url.startsWith("/admin")) return "admin";
   if (url.startsWith("/staff")) return "staff";
   return "customer";
 }
@@ -77,9 +76,9 @@ client.interceptors.request.use((config) => {
 // a burst of screen queries, all of which can discover a missing or expired
 // token at the same moment. They share one in-flight request rather than
 // stampeding the endpoint.
-const _refreshing = { owner: null, customer: null, admin: null };
-const _blockedUntil = { owner: 0, customer: 0, admin: 0 };
-const _lastError = { owner: null, customer: null, admin: null };
+const _refreshing = { owner: null, customer: null };
+const _blockedUntil = { owner: 0, customer: 0 };
+const _lastError = { owner: null, customer: null };
 
 // After a transient failure, hold off briefly. Without this, a still-unhealthy
 // endpoint would be hit once per screen query (each 401 below asks for a
@@ -157,7 +156,6 @@ export function isAuthFailure(err) {
 const _sessionEndedHandlers = {
   owner: new Set(),
   customer: new Set(),
-  admin: new Set(),
 };
 
 export function onSessionEnded(portal, handler) {
@@ -166,7 +164,7 @@ export function onSessionEnded(portal, handler) {
   return () => handlers.delete(handler);
 }
 
-// ── Response interceptor — auto-refresh for owner/customer/admin tokens ─────
+// ── Response interceptor — auto-refresh for owner/customer tokens ───────────
 // Retried on any 401 a fresh access token could fix: TOKEN_EXPIRED, a revoked
 // INVALID_TOKEN, and UNAUTHORIZED (no token attached at all — which is what the
 // screens send when an earlier refresh failed transiently). Retrying UNAUTHORIZED
@@ -217,7 +215,7 @@ client.interceptors.response.use(
       return Promise.reject(normalise(err, code));
     }
 
-    // Only auto-refresh owner/customer/admin access tokens, not staff tokens —
+    // Only auto-refresh owner/customer access tokens, not staff tokens —
     // staff sign in with a PIN and have no refresh cookie.
     if (
       err.response?.status === 401 &&

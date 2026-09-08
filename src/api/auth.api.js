@@ -7,10 +7,12 @@ import client, { assertPortal } from "./client";
 //
 //   Customer        POST /api/auth/login
 //   Restaurant owner POST /api/owner/auth/login
-//   Super admin     POST /api/admin/auth/login
 //   Staff (PIN)     POST /api/staff/auth/login
 //
-// /api/auth/refresh and /api/auth/logout are shared across customer/owner/admin,
+// The platform admin portal is a separate app (yulo_super_admin) and is not
+// served from this client.
+//
+// /api/auth/refresh and /api/auth/logout are shared across customer/owner,
 // but each portal has its OWN httpOnly refresh cookie (server/utils/refreshCookie.js)
 // because cookies ignore the port and the portals share one browser jar.
 //   refresh — name the cookie with ?portal=. Omitting it makes the server fall
@@ -19,7 +21,7 @@ import client, { assertPortal } from "./client";
 //   logout  — authenticated, so the server picks the cookie from req.user.role.
 
 export const authApi = {
-  // ── Shared (customer / owner / admin) ───────────────────────────────────
+  // ── Shared (customer / owner) ──────────────────────────────────────────
   // Prefer refreshSession() from api/client — it is single-flight, retries
   // transient failures and tells an expired session apart from a flaky one.
   refresh: (portal) => client.post(`/auth/refresh?portal=${assertPortal(portal)}`),
@@ -45,12 +47,6 @@ export const authApi = {
   ownerLogin: ({ email, password }) =>
     client.post("/owner/auth/login", { email, password }),
   ownerLogout: () => client.post("/owner/auth/logout"),
-
-  // ── Super admin ─────────────────────────────────────────────────────────
-  // No public signup — admins are provisioned via scripts/seedSuperAdmin.js.
-  adminLogin: ({ email, password }) =>
-    client.post("/admin/auth/login", { email, password }),
-  adminLogout: () => client.post("/admin/auth/logout"),
 
   // ── Staff (staff code + PIN) ────────────────────────────────────────────
   // _staff: true tells the interceptor to attach the staff token, not the

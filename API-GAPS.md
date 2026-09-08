@@ -138,47 +138,21 @@ coordinates it falls back to prefix-then-alphabetical ranking. Used by
 
 ---
 
-### 1.7 Admin: platform activity log
-API.md says every admin action is written to an activity log but that it is
-"not exposed via its own endpoint yet". The Activity Logs screen was removed.
+### 1.7 Platform admin portal — moved out of this client
+This client used to embed a second `/admin/*` portal that duplicated the
+standalone `yulo_super_admin` app against the same `/api/admin/*` API. It has
+been removed; `yulo_super_admin` is the canonical admin UI. Admin-surface API
+gaps (activity log, cross-restaurant order/offer/QR monitoring, system settings,
+a users/roles listing beyond `GET /api/admin/customers`) are tracked there, not
+here.
 
-```
-GET /api/admin/activity?page=&limit=
-```
-
----
-
-### 1.8 Admin: order and offer monitoring, QR oversight, system settings
-Four admin screens were removed because nothing backs them:
-
-```
-GET   /api/admin/orders                 — cross-restaurant order monitoring
-GET   /api/admin/offers                 — cross-restaurant offer monitoring
-PATCH /api/admin/offers/:id             — force-disable an offer
-GET   /api/admin/qr                     — platform-wide QR oversight
-GET   /api/admin/settings               — OTP length, notification toggles
-PATCH /api/admin/settings
-```
-
-Note `GET /api/admin/settings` also blocks making the customer OTP length
-configurable — the frontend currently hardcodes 6 digits to match the documented
+Note the missing `GET /api/admin/settings` also blocks making the customer OTP
+length configurable — this frontend hardcodes 6 digits to match the documented
 verify endpoint.
 
 ---
 
-### 1.9 Admin: staff and roles
-No admin endpoint lists restaurant staff or platform roles.
-`GET /api/admin/customers` returns customers only — owners, admins and staff are
-invisible to the admin console.
-
-```
-GET /api/admin/users?role=              — all users, not just customers
-GET /api/admin/roles                    — roles and their permission sets
-```
-
----
-
-### 1.10 Menu add-ons / extras
+### 1.8 Menu add-ons / extras
 The menu-management design has an "Add-ons & Extras" builder. Menu items have no
 add-on or modifier concept in the API. The section was removed.
 
@@ -188,7 +162,7 @@ GET/POST/PATCH/DELETE /api/owner/:restaurantId/menu-items/:itemId/addons
 
 ---
 
-### 1.11 Ingredient cost / inventory
+### 1.9 Ingredient cost / inventory
 The ingredients editor was designed with quantity, unit and cost per ingredient
 for food-cost maths. The API stores `ingredients` as a **plain string array**.
 The editor is now a simple tag list.
@@ -199,7 +173,7 @@ The editor is now a simple tag list.
 
 ---
 
-### 1.12 Cancellation reasons and refunds
+### 1.10 Cancellation reasons and refunds
 The cancellations screen can only list orders with `status: "cancelled"`. There
 is no cancellation reason, requester, approval flow or refund record.
 

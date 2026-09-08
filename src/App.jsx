@@ -23,14 +23,11 @@ import ManagerRequests from "./screens/manager/ManagerRequests";
 import ManagerTables from "./screens/manager/ManagerTables";
 import CustomerApp from "./screens/customer/CustomerApp";
 import WaiterApp from "./screens/waiter/WaiterApp";
-import AdminApp from "./screens/admin/AdminApp";
-import AdminLogin from "./screens/admin/AdminLogin";
 import OwnerLoginPage from "./screens/auth/OwnerLoginPage";
 import StaffLoginPage from "./screens/auth/StaffLoginPage";
 import OwnerRoute from "./components/OwnerRoute";
 import ApprovalGate from "./components/ApprovalGate";
 import StaffRoute from "./components/StaffRoute";
-import AdminRoute from "./components/AdminRoute";
 
 export default function App() {
   return (
@@ -38,7 +35,6 @@ export default function App() {
       {/* ── Auth routes (public) ─────────────────────────────────────── */}
       <Route path="/owner/login" element={<OwnerLoginPage />} />
       <Route path="/staff/login" element={<StaffLoginPage />} />
-      <Route path="/admin/login" element={<AdminLogin />} />
 
       {/* ── Owner portal (protected) ───────────────────────────────────
           OwnerRoute checks the session; ApprovalGate then locks everything
@@ -75,8 +71,7 @@ export default function App() {
       <Route path="/manager/requests" element={<OwnerRoute><ApprovalGate><ManagerRequests /></ApprovalGate></OwnerRoute>} />
       <Route path="/manager/tables" element={<OwnerRoute><ApprovalGate><ManagerTables /></ApprovalGate></OwnerRoute>} />
 
-      {/* ── Platform Admin portal ─────────────────────────────────────── */}
-      <Route path="/admin/*" element={<AdminRoute><AdminApp /></AdminRoute>} />
+      {/* Platform Admin lives in its own app (yulo_super_admin), not here. */}
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
