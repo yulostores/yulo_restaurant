@@ -29,7 +29,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ImagePlus, ImageUp, Lock, X } from "lucide-react";
+import { ChevronDown, ImagePlus, ImageUp, Lock, MapPin, MapPinOff, X } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import {
@@ -105,7 +105,11 @@ function inputAttrs(field) {
   return attrs;
 }
 
-function Field({ label, htmlFor, error, required, children }) {
+// `help` comes from the field descriptor the server serves (config/storeSettings.config.js),
+// same as the label and the bounds — so a field whose MEANING needs explaining, like the
+// delivery radius, carries that explanation from the one place the rule itself lives rather
+// than from a sentence hardcoded here that can drift away from it.
+function Field({ label, htmlFor, error, required, help, children }) {
   return (
     <div className="space-y-1.5">
       <Label htmlFor={htmlFor} className="text-xs uppercase tracking-wide text-brand-red">
@@ -121,6 +125,8 @@ function Field({ label, htmlFor, error, required, children }) {
         <p role="alert" className="text-[11px] text-brand-maroon">
           {error}
         </p>
+      ) : help ? (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">{help}</p>
       ) : null}
     </div>
   );
@@ -148,6 +154,61 @@ function LockBadge() {
       <Lock className="h-2.5 w-2.5" />
       Locked
     </span>
+  );
+}
+
+// How far this restaurant reaches, and whether it is on the map at all.
+//
+// Mirrors server/config/delivery.config.js. An owner filling in this form has no other way
+// to tell whether their address was actually turned into a map point: the whole form can be
+// complete and correct, the store approved and open, and still reach nobody, because the
+// geocoder never resolved the address into coordinates. That used to be silent in every
+// portal — this is the owner's half of the same answer the admin console now gives.
+const DISCOVERY_RADIUS_KM = 25;
+
+function MapPlacement({ restaurant }) {
+  const coordinates = restaurant?.location?.coordinates;
+  const [lng, lat] = Array.isArray(coordinates) ? coordinates : [];
+  const placed =
+    Array.isArray(coordinates) &&
+    coordinates.length === 2 &&
+    Number.isFinite(lng) &&
+    Number.isFinite(lat) &&
+    !(lng === 0 && lat === 0);
+
+  if (!placed) {
+    return (
+      <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
+        <MapPinOff className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+        <p className="text-[11px] leading-relaxed text-destructive">
+          <span className="font-semibold">Not placed on the map yet.</span> Customers cannot
+          find you until this is fixed, however complete the rest of your profile is. Check
+          the street, city, state and pincode above and save again — the pincode and state
+          are what usually make the difference. If it still fails, ask support to place you
+          manually.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-brand-line bg-muted/30 px-3 py-2">
+      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-orange" />
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <span className="font-semibold text-foreground">You are on the map.</span> Customers
+        within {DISCOVERY_RADIUS_KM} km of this point see your restaurant, closest first.
+        Your delivery radius (under Delivery) decides how far you will actually deliver —
+        beyond it you are still listed, marked as not deliverable to that address.{" "}
+        <a
+          href={`https://www.google.com/maps?q=${lat},${lng}`}
+          target="_blank"
+          rel="noreferrer"
+          className="font-semibold text-brand-orange"
+        >
+          Check the pin
+        </a>
+      </p>
+    </div>
   );
 }
 
@@ -870,6 +931,9 @@ export default function StoreSettings() {
                 Changing the address re-places your restaurant on the map, so customers
                 searching nearby find you at the new location.
               </p>
+              <div className="sm:col-span-2">
+                <MapPlacement restaurant={serverSettings} />
+              </div>
             </CardContent>
           </Card>
 
@@ -972,6 +1036,7 @@ export default function StoreSettings() {
                 htmlFor={inputId(field.path)}
                 required={field.required}
                 error={errorFor(field.path)}
+                help={field.help}
               >
                 {renderInput(field)}
               </Field>

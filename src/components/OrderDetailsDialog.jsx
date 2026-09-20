@@ -270,11 +270,26 @@ export default function OrderDetailsDialog({ order, onClose, action }) {
               <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                 Delivery address
               </p>
+              {/* The flat number on its own line, in bold. It is the one part of an address
+                  that decides whether a delivery succeeds, and it used to be buried in the
+                  middle of a comma-joined line because the app sent the whole address as one
+                  string. Orders placed before the parts were stored separately have no
+                  `houseNumber` — those fall back to the composed line below, which still
+                  contains it. */}
+              {order.deliveryAddress.houseNumber ? (
+                <p className="text-sm font-semibold text-foreground">
+                  {[order.deliveryAddress.houseNumber, order.deliveryAddress.building]
+                    .filter(Boolean)
+                    .join(", ")}
+                  {order.deliveryAddress.floor ? ` · Floor ${order.deliveryAddress.floor}` : ""}
+                </p>
+              ) : null}
               <p className="text-sm text-muted-foreground">
                 {/* The whole postal address, not just street and city — the PIN is what a
                     delivery partner navigates by, and the order now carries it. */}
                 {[
                   order.deliveryAddress.street,
+                  order.deliveryAddress.area,
                   order.deliveryAddress.city,
                   order.deliveryAddress.state,
                   order.deliveryAddress.pincode,
@@ -282,6 +297,11 @@ export default function OrderDetailsDialog({ order, onClose, action }) {
                   .filter(Boolean)
                   .join(", ")}
               </p>
+              {order.deliveryAddress.landmark ? (
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Landmark: {order.deliveryAddress.landmark}
+                </p>
+              ) : null}
               {/* Who is at the door, when that isn't the account holder — an order sent to
                   a parent's house reaches a different person than the one who paid. */}
               {order.deliveryAddress.contactName || order.deliveryAddress.contactPhone ? (
