@@ -2,8 +2,8 @@
 // with a full discount configuration, a live coupon preview, and a managed list
 // of active/scheduled/expired offers (PRD §17).
 
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Copy, ImagePlus, Pencil, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Check, Copy, ImagePlus, Pencil, Trash2, X } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import {
@@ -13,7 +13,7 @@ import {
   useDeleteDiscount,
   usePublishDiscount,
 } from "@/hooks/owner/useDiscounts";
-import { useMenuItems } from "@/hooks/owner/useMenuItems";
+import { useMenuItems, useCategories } from "@/hooks/owner/useMenuItems";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,22 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+
+const DESCRIPTION_MAX = 300;
+
+// Input sanitisers, applied as the owner types so a bad character never lands in state.
+// A number of up to 3 digits, decimals allowed (e.g. a percentage: 5, 12.5, 100).
+const limitedNumber = (v) => {
+  const [whole = "", ...rest] = v.replace(/[^\d.]/g, "").split(".");
+  const w = whole.slice(0, 3);
+  return rest.length ? `${w}.${rest.join("").slice(0, Math.max(0, 3 - w.length))}` : w;
+};
+const wholeNumber = (v) => v.replace(/\D/g, "");
+
+// <input type="date"> lets a 5- or 6-digit year through when typed or picked; keep the
+// previous value if the new one's year part is longer than 4 digits.
+const YEAR_BOUNDS = { min: "1000-01-01", max: "9999-12-31" };
+const yearSafe = (next, prev) => (/^\d{5,}-/.test(next) || /^[-+]\d/.test(next) ? prev : next);
 
 const DISCOUNT_TYPES = [
   { value: "percentage",  label: "Percentage" },
@@ -73,6 +89,8 @@ const EMPTY = {
   applicableFor: "dine_in",
   validFrom: "",
   validTo: "",
+  applicableCategories: [],
+  applicableItems: [],
 };
 
 function discountLabel(offer) {
@@ -255,7 +273,57 @@ function RupeeInput({ value, onChange, placeholder }) {
       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
         ₹
       </span>
-      <Input value={value} onChange={onChange} placeholder={placeholder} className="pl-7" />
+      <Input
+        inputMode="numeric"
+        maxLength={9}
+        value={value}
+        onChange={(e) => {
+          e.target.value = wholeNumber(e.target.value);
+          onChange(e);
+        }}
+        placeholder={placeholder}
+        className="pl-7"
+      />
+    </div>
+  );
+}
+
+// A scrollable multi-select list: the "menu card" for picking categories or items.
+function CheckList({ options, selected, onChange, searchable = false, empty }) {
+  const [q, setQ] = useState("");
+  const shown = options.filter((o) => o.label.toLowerCase().includes(q.toLowerCase()));
+  const toggle = (id) =>
+    onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+
+  return (
+    <div className="space-y-2 rounded-xl border border-brand-cream bg-white p-3">
+      {searchable && (
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search items..." />
+      )}
+      <div className="max-h-56 space-y-0.5 overflow-y-auto">
+        {options.length === 0 ? (
+          <p className="py-3 text-center text-sm text-muted-foreground">{empty}</p>
+        ) : shown.length === 0 ? (
+          <p className="py-3 text-center text-sm text-muted-foreground">No matches.</p>
+        ) : (
+          shown.map((o) => (
+            <label
+              key={o.id}
+              className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm hover:bg-brand-cream/30"
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(o.id)}
+                onChange={() => toggle(o.id)}
+                className="h-4 w-4 accent-[#E8590C]"
+              />
+              <span className="flex-1 truncate">{o.label}</span>
+              {o.hint ? <span className="text-xs text-muted-foreground">{o.hint}</span> : null}
+            </label>
+          ))
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">{selected.length} selected</p>
     </div>
   );
 }
@@ -264,6 +332,7 @@ export default function Offers() {
   const { restaurantId } = useOwnerAuth();
   const { data: offers = [], isLoading } = useDiscounts(restaurantId);
   const { data: menuItems = [] }         = useMenuItems(restaurantId);
+  const { data: categories = [] }        = useCategories(restaurantId);
   const items = menuItems;
 
   const createMutation  = useCreateDiscount(restaurantId);
@@ -278,6 +347,33 @@ export default function Offers() {
   const [editForm, setEditForm]       = useState(null);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  // "Coupon code copied" popup, auto-dismissed.
+  const [copied, setCopied] = useState(false);
+  const copyTimer = useRef();
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
+
+  async function copyCode() {
+    const code = form.code.trim();
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch {
+      // Clipboard API is unavailable on insecure origins or when permission is denied.
+      const ta = document.createElement("textarea");
+      ta.value = code;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      if (!ok) { setError("Couldn't copy the coupon code"); return; }
+    }
+    setCopied(true);
+    clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(false), 2000);
+  }
 
   // Blob previews for the pending files, created once here and shared with the dropzone
   // and the live preview so a File is never turned into two object URLs.
@@ -301,7 +397,11 @@ export default function Offers() {
     };
 
     if (payload.type === "percentage")  payload.percentage  = Number(f.discountValue);
-    if (payload.type === "flat_amount") payload.flatAmount  = Number(f.discountValue);
+    if (payload.type === "flat_amount") {
+      payload.flatAmount = Number(f.discountValue);
+      if (f.itemApplicability === "categories") payload.applicableCategories = f.applicableCategories;
+      if (f.itemApplicability === "specific_items") payload.applicableItems = f.applicableItems;
+    }
     if (payload.type === "free_item")   payload.freeItemId  = f.item;
     if (payload.type === "tablewise") {
       payload.flatAmount = Number(f.discountValue);
@@ -350,6 +450,12 @@ export default function Offers() {
       if (!raw) return "Enter a discount amount";
       if (!Number.isFinite(value) || value <= 0) return "Discount amount must be more than ₹0";
     }
+    if (f.discountType === "flat_amount" && f.itemApplicability === "categories" && !f.applicableCategories.length)
+      return "Pick at least one category";
+    if (f.discountType === "flat_amount" && f.itemApplicability === "specific_items" && !f.applicableItems.length)
+      return "Pick at least one item";
+    if (f.description.length > DESCRIPTION_MAX)
+      return `Description must be at most ${DESCRIPTION_MAX} characters`;
     if (f.discountType === "free_item" && !f.item) return "Pick the free item";
     if (f.discountType === "tablewise" && !f.tableNumbers.trim())
       return "List at least one table number";
@@ -424,6 +530,12 @@ export default function Offers() {
       minOrder:      offer.minimumOrderValue ? String(offer.minimumOrderValue) : "",
       applicableFor: offer.applicableTo ?? "both",
       tableNumbers:  (offer.applicableTableNumbers ?? []).join(", "),
+      applicableCategories: offer.applicableCategories ?? [],
+      applicableItems:      offer.applicableItems ?? [],
+      itemApplicability:
+        offer.applicableItems?.length ? "specific_items"
+        : offer.applicableCategories?.length ? "categories"
+        : "entire_menu",
       validFrom:     toDateInput(offer.startDate),
       validTo:       toDateInput(offer.endDate),
     };
@@ -542,7 +654,8 @@ export default function Offers() {
               <Input
                 type="date"
                 value={editForm.validFrom}
-                onChange={(e) => setEF({ validFrom: e.target.value })}
+                {...YEAR_BOUNDS}
+                onChange={(e) => setEF({ validFrom: yearSafe(e.target.value, editForm.validFrom) })}
               />
             </div>
 
@@ -552,7 +665,8 @@ export default function Offers() {
               <Input
                 type="date"
                 value={editForm.validTo}
-                onChange={(e) => setEF({ validTo: e.target.value })}
+                {...YEAR_BOUNDS}
+                onChange={(e) => setEF({ validTo: yearSafe(e.target.value, editForm.validTo) })}
               />
             </div>
 
@@ -570,10 +684,14 @@ export default function Offers() {
 
             {/* Description — full width */}
             <div className="col-span-full space-y-1.5">
-              <label className="text-sm font-medium text-[#24190f]">Description</label>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-[#24190f]">Description</label>
+                <span className="text-xs text-muted-foreground">{editForm.description.length}/{DESCRIPTION_MAX}</span>
+              </div>
               <Textarea
                 value={editForm.description}
-                onChange={(e) => setEF({ description: e.target.value })}
+                onChange={(e) => setEF({ description: e.target.value.slice(0, DESCRIPTION_MAX) })}
+                maxLength={DESCRIPTION_MAX}
                 rows={4}
                 placeholder="Describe the offer for your customers…"
               />
@@ -670,7 +788,15 @@ export default function Offers() {
                       placeholder="ICECREAMFREE"
                       className="pr-10 font-mono tracking-wide"
                     />
-                    <Copy className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <button
+                      type="button"
+                      onClick={copyCode}
+                      disabled={!form.code.trim()}
+                      aria-label="Copy coupon code"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition hover:text-brand-orange disabled:opacity-40"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
               ) : null}
@@ -687,10 +813,14 @@ export default function Offers() {
               </div>
 
               <div className="space-y-1.5">
-                <Label>Description</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Description</Label>
+                  <span className="text-xs text-muted-foreground">{form.description.length}/{DESCRIPTION_MAX}</span>
+                </div>
                 <Textarea
                   value={form.description}
-                  onChange={(e) => set({ description: e.target.value })}
+                  onChange={(e) => set({ description: e.target.value.slice(0, DESCRIPTION_MAX) })}
+                  maxLength={DESCRIPTION_MAX}
                   placeholder="Enjoy our signature gourmet sundae on the house with any ₹300 purchase."
                 />
               </div>
@@ -719,11 +849,10 @@ export default function Offers() {
                   <div className="space-y-1.5">
                     <Label>Discount (%)</Label>
                     <Input
-                      type="number"
-                      min="0"
-                      max="100"
+                      inputMode="decimal"
+                      maxLength={7}
                       value={form.discountValue}
-                      onChange={(e) => set({ discountValue: e.target.value })}
+                      onChange={(e) => set({ discountValue: limitedNumber(e.target.value) })}
                       placeholder="20"
                     />
                   </div>
@@ -773,6 +902,33 @@ export default function Offers() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {form.itemApplicability === "categories" && (
+                    <div className="col-span-full space-y-1.5">
+                      <Label>Select Categories</Label>
+                      <CheckList
+                        options={categories.map((c) => ({ id: c._id, label: c.name }))}
+                        selected={form.applicableCategories}
+                        onChange={(ids) => set({ applicableCategories: ids })}
+                        empty="You haven't created any categories yet."
+                      />
+                    </div>
+                  )}
+                  {form.itemApplicability === "specific_items" && (
+                    <div className="col-span-full space-y-1.5">
+                      <Label>Select Items</Label>
+                      <CheckList
+                        searchable
+                        options={items.map((i) => ({
+                          id: i._id,
+                          label: i.name,
+                          hint: categories.find((c) => c._id === i.categoryId)?.name,
+                        }))}
+                        selected={form.applicableItems}
+                        onChange={(ids) => set({ applicableItems: ids })}
+                        empty="No menu items yet."
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -836,7 +992,8 @@ export default function Offers() {
                     <Input
                       type="date"
                       value={form.validFrom}
-                      onChange={(e) => set({ validFrom: e.target.value })}
+                      {...YEAR_BOUNDS}
+                      onChange={(e) => set({ validFrom: yearSafe(e.target.value, form.validFrom) })}
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -844,7 +1001,8 @@ export default function Offers() {
                     <Input
                       type="date"
                       value={form.validTo}
-                      onChange={(e) => set({ validTo: e.target.value })}
+                      {...YEAR_BOUNDS}
+                      onChange={(e) => set({ validTo: yearSafe(e.target.value, form.validTo) })}
                     />
                   </div>
                 </div>
@@ -1070,6 +1228,14 @@ export default function Offers() {
           </Table>
         </CardContent>
       </Card>
+      {copied && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full bg-[#24190f] px-4 py-2 text-sm text-white shadow-lg"
+        >
+          <Check className="h-4 w-4" /> Coupon code copied
+        </div>
+      )}
     </DashboardLayout>
   );
 }

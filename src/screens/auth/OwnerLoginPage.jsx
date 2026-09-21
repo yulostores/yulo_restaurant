@@ -2,6 +2,44 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 
+// Keep in step with signupSchema in yulo_backend/server/routes/owner/auth.routes.js.
+const NAME_MIN = 2;
+const NAME_MAX = 60;
+const PHONE_RE = /^[6-9]\d{9}$/;
+
+function normalizePhone(raw) {
+  let digits = raw.replace(/\D/g, "");
+  if (digits.length > 10 && digits.startsWith("91")) digits = digits.slice(2);
+  else if (digits.length > 10 && digits.startsWith("0")) digits = digits.slice(1);
+  return digits.slice(0, 10);
+}
+
+function passwordError(pw) {
+  if (pw.length < 8) return "Password must be at least 8 characters";
+  if (pw.length > 64) return "Password must be at most 64 characters";
+  const missing = [];
+  if (!/[a-z]/.test(pw)) missing.push("a lowercase letter");
+  if (!/[A-Z]/.test(pw)) missing.push("an uppercase letter");
+  if (!/\d/.test(pw)) missing.push("a number");
+  if (!/[^A-Za-z0-9]/.test(pw)) missing.push("a special character");
+  return missing.length ? `Password needs ${missing.join(", ")}` : "";
+}
+
+function validateSignup({ name, phone, password }) {
+  const errors = {};
+  const trimmed = name.trim();
+  if (trimmed.length < NAME_MIN) errors.name = `Full name must be at least ${NAME_MIN} characters`;
+  else if (trimmed.length > NAME_MAX) errors.name = `Full name must be at most ${NAME_MAX} characters`;
+  if (phone && !PHONE_RE.test(phone)) errors.phone = "Enter a valid 10-digit mobile number";
+  const pwErr = passwordError(password);
+  if (pwErr) errors.password = pwErr;
+  return errors;
+}
+
+function FieldError({ message }) {
+  return message ? <p className="mt-1.5 text-xs text-red-600">{message}</p> : null;
+}
+
 export default function OwnerLoginPage() {
   const navigate = useNavigate();
   const { login, signup } = useOwnerAuth();
@@ -12,13 +50,24 @@ export default function OwnerLoginPage() {
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
 
+  const [fieldErrors, setFieldErrors] = useState({});
+
   function handleChange(e) {
-    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+    const { name, value } = e.target;
+    // Phone: digits only. A pasted "+91 98765-43210" is reduced to its 10-digit number.
+    const next = name === "phone" ? normalizePhone(value) : value;
+    setForm((prev) => ({ ...prev, [name]: next }));
+    if (fieldErrors[name]) setFieldErrors((prev) => ({ ...prev, [name]: "" }));
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+    if (mode === "signup") {
+      const errors = validateSignup(form);
+      setFieldErrors(errors);
+      if (Object.keys(errors).length) return;
+    }
     setLoading(true);
     try {
       if (mode === "login") {
@@ -121,7 +170,7 @@ export default function OwnerLoginPage() {
                 <button
                   key={m}
                   type="button"
-                  onClick={() => { setMode(m); setError(""); }}
+                  onClick={() => { setMode(m); setError(""); setFieldErrors({}); }}
                   className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-all ${
                     mode === m
                       ? "bg-[#23180E] text-white shadow-sm"
@@ -145,9 +194,11 @@ export default function OwnerLoginPage() {
                     onChange={handleChange}
                     placeholder="Your name"
                     required
-                    minLength={2}
+                    minLength={NAME_MIN}
+                    maxLength={NAME_MAX}
                     className="w-full rounded-xl border border-[#F5DFCE] bg-[#FFFAF7] px-4 py-3 text-sm text-[#23180E] placeholder-[#c4aa96] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"
                   />
+                  <FieldError message={fieldErrors.name} />
                 </div>
               )}
 
@@ -162,8 +213,10 @@ export default function OwnerLoginPage() {
                     onChange={handleChange}
                     placeholder="9876543210"
                     inputMode="numeric"
+                    autoComplete="tel-national"
                     className="w-full rounded-xl border border-[#F5DFCE] bg-[#FFFAF7] px-4 py-3 text-sm text-[#23180E] placeholder-[#c4aa96] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"
                   />
+                  <FieldError message={fieldErrors.phone} />
                 </div>
               )}
 
@@ -192,9 +245,8 @@ export default function OwnerLoginPage() {
                     type={showPw ? "text" : "password"}
                     value={form.password}
                     onChange={handleChange}
-                    placeholder={mode === "signup" ? "Min 8 characters" : "Your password"}
+                    placeholder={mode === "signup" ? "Min 8 chars, Aa, 1, #" : "Your password"}
                     required
-                    minLength={mode === "signup" ? 8 : undefined}
                     className="w-full rounded-xl border border-[#F5DFCE] bg-[#FFFAF7] px-4 py-3 pr-12 text-sm text-[#23180E] placeholder-[#c4aa96] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"
                   />
                   <button
@@ -210,6 +262,12 @@ export default function OwnerLoginPage() {
                     )}
                   </button>
                 </div>
+                {mode === "signup" && !fieldErrors.password && (
+                  <p className="mt-1.5 text-xs text-[#a08070]">
+                    8+ characters with uppercase, lowercase, a number and a special character.
+                  </p>
+                )}
+                <FieldError message={fieldErrors.password} />
               </div>
 
               {error && (

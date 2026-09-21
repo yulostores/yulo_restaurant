@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { useObjectUrl } from "@/lib/useObjectUrl";
 
 // A ₹-prefixed number input.
 function RupeeInput({ value, defaultValue, onChange, className }) {
@@ -53,7 +54,18 @@ function RupeeInput({ value, defaultValue, onChange, className }) {
       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
         ₹
       </span>
-      <Input value={value} defaultValue={defaultValue} onChange={onChange} className={cn("pl-7", className)} />
+      <Input
+        inputMode="numeric"
+        maxLength={9}
+        value={value}
+        defaultValue={defaultValue}
+        // Whole rupees only: strip anything that isn't a digit as it is typed.
+        onChange={(e) => {
+          e.target.value = e.target.value.replace(/\D/g, "");
+          onChange?.(e);
+        }}
+        className={cn("pl-7", className)}
+      />
     </div>
   );
 }
@@ -94,6 +106,7 @@ function VegDot({ type }) {
 const PREP_TIME_OPTIONS = [5, 10, 15, 20, 30, 45, 60];
 
 const DESCRIPTION_MAX = 300;
+const ITEM_NAME_MAX = 100;
 
 const EMPTY_ITEM = {
   name: "", description: "", prepTime: 20,
@@ -122,6 +135,11 @@ export default function MenuManagement() {
   const [ingredients, setIngredients]   = useState([]);
   const [newIngredient, setNewIngredient] = useState("");
   const [imageFile, setImageFile]       = useState(null);
+  const [imageError, setImageError]     = useState("");
+  const [dragging, setDragging]         = useState(false);
+  // Preview a freshly picked file, else the saved image of the item being edited.
+  const pickedUrl  = useObjectUrl(imageFile);
+  const previewUrl = pickedUrl ?? item.image ?? null;
   const [statusMsg, setStatusMsg]       = useState("");
   const [newCatName, setNewCatName]     = useState("");
   const [showNewCat, setShowNewCat]     = useState(false);
@@ -155,7 +173,18 @@ export default function MenuManagement() {
     setIngredients((list) => list.filter((i) => i !== value));
   }
 
+  function pickImage(file) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setImageError("Please choose an image file.");
+      return;
+    }
+    setImageError("");
+    setImageFile(file);
+  }
+
   function resetForm() {
+    setImageError("");
     setItem(EMPTY_ITEM);
     setIngredients([]);
     setNewIngredient("");
@@ -166,12 +195,17 @@ export default function MenuManagement() {
   // wire as a JSON array string, per the documented field list.
   async function handleSubmit() {
     setStatusMsg("");
-    if (!item.name || !item.categoryId || !item.sellingPrice) {
+    const name = item.name.trim();
+    if (!name || !item.categoryId || !item.sellingPrice) {
       setStatusMsg("Name, category and price are required.");
       return;
     }
+    if (name.length > ITEM_NAME_MAX) {
+      setStatusMsg(`Item name must be at most ${ITEM_NAME_MAX} characters.`);
+      return;
+    }
     const formData = new FormData();
-    formData.append("name", item.name);
+    formData.append("name", name);
     formData.append("description", item.description ?? "");
     formData.append("sellingPrice", String(item.sellingPrice));
     if (item.discountedPrice) formData.append("discountedPrice", String(item.discountedPrice));
@@ -192,8 +226,10 @@ export default function MenuManagement() {
 
   // Load an existing item back into the form for editing.
   function editItem(existing) {
+    setImageError("");
     setItem({
       _id:             existing._id,
+      image:           existing.image ?? null,
       name:            existing.name ?? "",
       description:     existing.description ?? "",
       prepTime:        existing.prepTime ?? 20,
@@ -237,19 +273,55 @@ export default function MenuManagement() {
           <h2 className="text-base font-bold">Item Information</h2>
         </CardHeader>
         <CardContent className="space-y-5">
-          <label className="flex h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[#E2DFDE] bg-[#FCFAF7] text-center transition hover:border-brand-orange/50">
-            <span className="grid h-12 w-12 place-items-center rounded-full bg-[#FFDAD6]/50 text-brand-orange">
-              <ImagePlus className="h-5 w-5" />
-            </span>
-            <span className="text-sm text-muted-foreground">
-              Upload Food Photo or Drag &amp; Drop
-            </span>
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
+          <label
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              pickImage(e.dataTransfer.files?.[0]);
+            }}
+            className={cn(
+              "relative flex h-36 cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border-2 border-dashed bg-[#FCFAF7] text-center transition hover:border-brand-orange/50",
+              dragging ? "border-brand-orange" : "border-[#E2DFDE]",
+            )}
+          >
+            {previewUrl ? (
+              <>
+                <img src={previewUrl} alt="Food preview" className="absolute inset-0 h-full w-full object-cover" />
+                <span className="absolute bottom-2 rounded-full bg-black/60 px-3 py-1 text-xs text-white">
+                  Click or drop to replace
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="grid h-12 w-12 place-items-center rounded-full bg-[#FFDAD6]/50 text-brand-orange">
+                  <ImagePlus className="h-5 w-5" />
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  Upload Food Photo or Drag &amp; Drop
+                </span>
+              </>
+            )}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => { pickImage(e.target.files?.[0]); e.target.value = ""; }}
+            />
           </label>
+          {imageError && <p className="-mt-3 text-xs text-red-500">{imageError}</p>}
 
           <div className="space-y-1.5">
-            <Label>Item Name</Label>
-            <Input value={item.name} onChange={(e) => setItem((i) => ({ ...i, name: e.target.value }))} />
+            <div className="flex items-center justify-between">
+              <Label>Item Name</Label>
+              <span className="text-xs text-muted-foreground">{item.name.length}/{ITEM_NAME_MAX}</span>
+            </div>
+            <Input
+              value={item.name}
+              maxLength={ITEM_NAME_MAX}
+              onChange={(e) => setItem((i) => ({ ...i, name: e.target.value.slice(0, ITEM_NAME_MAX) }))}
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -295,7 +367,7 @@ export default function MenuManagement() {
                   onClick={() => setItem((i) => ({ ...i, categoryId: c._id, categoryName: c.name }))}
                 />
               ))}
-              <Chip label="+ Add Category" dashed icon={Plus} onClick={() => setShowNewCat((v) => !v)} />
+              <Chip label="Add Category" dashed icon={Plus} onClick={() => setShowNewCat((v) => !v)} />
             </div>
             {showNewCat && (
               <div className="flex gap-2">

@@ -41,7 +41,16 @@ export function useSalesChart(restaurantId, period = "week") {
 export function useTopItems(restaurantId, period = "month") {
   return useQuery({
     queryKey: dashboardKeys.topItems(restaurantId, period),
-    queryFn: () => ownerApi.getTopItems(restaurantId, period).then((r) => r.data.data.items ?? []),
+    // The aggregation returns { _id, name, totalQty, totalRevenue }; the screens read
+    // menuItemId / totalQuantity, so quantity sold never rendered until mapped here.
+    queryFn: () =>
+      ownerApi.getTopItems(restaurantId, period).then((r) =>
+        (r.data.data.items ?? []).map((i) => ({
+          ...i,
+          menuItemId: i.menuItemId ?? i._id,
+          totalQuantity: i.totalQuantity ?? i.totalQty ?? 0,
+        })),
+      ),
     enabled: !!restaurantId,
     staleTime: 5 * 60_000,
   });
