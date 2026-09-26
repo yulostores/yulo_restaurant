@@ -40,6 +40,7 @@ import {
 import { useRestaurant } from "@/hooks/customer/useMenu";
 import BillDocument from "@/components/BillDocument";
 import QRScannerModal from "@/components/QRScannerModal";
+import { parseTableQr } from "@/lib/tableQr";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -72,22 +73,6 @@ const STATUS_TONE = {
 function roundTime(value) {
   if (!value) return null;
   return new Date(value).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-}
-
-// Extract the tableId the scan endpoint wants from whatever the QR encodes.
-function tableIdFromQr(raw) {
-  const value = String(raw ?? "").trim();
-  try {
-    const url = new URL(value);
-    const id = url.searchParams.get("tableId");
-    if (id) return id;
-  } catch {
-    // Not a URL — fall through.
-  }
-  const match = value.match(/tableId=([A-Za-z0-9]+)/);
-  if (match) return match[1];
-  // A bare ObjectId is also acceptable.
-  return /^[a-f0-9]{24}$/i.test(value) ? value : null;
 }
 
 // What the chips actually select. A filter keeps a table only if it has a round in that
@@ -421,13 +406,18 @@ export default function WaiterDashboard() {
 
   async function handleQRScan(raw) {
     setActionError("");
-    const tableId = tableIdFromQr(raw);
-    if (!tableId) {
-      setActionError("That QR code doesn't carry a table id.");
+    const qr = parseTableQr(raw);
+    if (!qr) {
+      setActionError("That isn't a table QR code. Scan the QR printed on the table.");
+      return;
+    }
+    // The server would only say "not found" for another restaurant's table.
+    if (qr.restaurantId && qr.restaurantId !== String(restaurantId ?? "").toLowerCase()) {
+      setActionError("That table QR belongs to a different restaurant.");
       return;
     }
     try {
-      const { data } = await scanTable(tableId);
+      const { data } = await scanTable(qr.tableId);
       const { table, session } = data.data;
       setActiveTable({
         sessionId: session._id,

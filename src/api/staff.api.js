@@ -52,8 +52,8 @@ export const staffApi = {
   },
 
   // ── Waiter (role: waiter) ────────────────────────────────────────
-  // qrToken is the table's _id, taken from the `tableId` query param of the
-  // scanned QR URL (…/menu?restaurantId=<id>&tableId=<id>).
+  // qrToken is the table's _id, read out of the scanned QR by src/lib/tableQr.js
+  // (…/?r=<id>&t=<id>, or the older …/menu?restaurantId=<id>&tableId=<id>).
   scanTable: (restaurantId, qrToken) =>
     client.post(`/staff/${restaurantId}/waiter/tables/scan`, { qrToken }, S),
 

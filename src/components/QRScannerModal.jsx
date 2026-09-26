@@ -1,6 +1,7 @@
-// Camera QR scanner used by the waiter to open a table session. The table QR
-// encodes …/menu?restaurantId=<id>&tableId=<id>; the caller extracts tableId and
-// sends it as the `qrToken` to POST /api/staff/:rId/waiter/tables/scan.
+// Camera QR scanner used by the waiter to open a table session. It hands the raw text to
+// the caller, which reads the table id out of it with src/lib/tableQr.js (both the current
+// …/?r=<id>&t=<id> and the older …/menu?restaurantId=<id>&tableId=<id> formats) and sends
+// it as the `qrToken` to POST /api/staff/:rId/waiter/tables/scan.
 
 import { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
