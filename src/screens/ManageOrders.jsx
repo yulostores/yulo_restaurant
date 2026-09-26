@@ -11,9 +11,10 @@
 //   All orders — GET /api/owner/:rId/orders. The flat, paginated audit list, now carrying
 //               the table and the staff member on every row.
 //
-// Status is read-only here by design: transitions belong to the chef KDS and to the
-// waiter portal (which owns the "served" step). This screen reflects them — it does not
-// drive them.
+// Status is read-only here by design: accepting or rejecting a new customer order happens
+// on Incoming Orders (/incoming-orders), and later transitions belong to the chef KDS and
+// the waiter portal (which owns the "served" step). This screen reflects them — it does
+// not drive them.
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -41,8 +42,8 @@ import { cn } from "@/lib/utils";
 // The order lifecycle exactly as the API documents it, plus the waiter-owned 'served'.
 const FILTERS = [
   { value: "",                 label: "All Orders" },
-  { value: "placed",           label: "Placed" },
-  { value: "confirmed",        label: "Confirmed" },
+  { value: "placed",           label: "Awaiting acceptance" },
+  { value: "confirmed",        label: "Accepted" },
   { value: "preparing",        label: "Preparing" },
   { value: "ready",            label: "Ready" },
   { value: "served",           label: "Served" },

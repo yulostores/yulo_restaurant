@@ -11,7 +11,10 @@
 // The chips across the top select ROUNDS, not tables (FLOOR_FILTERS in ./orderStatus.js):
 //
 //   All Orders     every open table, all of its rounds
-//   Preparing      rounds still with the kitchen — placed, accepted or on the stove
+//   Preparing      rounds still with the kitchen — accepted or on the stove
+//
+// A guest's round from the table QR only reaches this screen once the restaurant accepts
+// it in the owner portal; until then the table card just says how many are waiting.
 //   Ready To Serve rounds the chef has marked ready: the tray waiting to be carried out
 //   Served         rounds already delivered to the table, bill not yet settled
 //   Completed      sittings settled today — read from ?scope=completed, since a paid
@@ -214,14 +217,28 @@ function SessionCard({
           <span className="rounded-lg bg-[#FFF0E6] px-3 py-1.5 text-sm font-bold text-brand-orange">
             {tableLabel}
           </span>
-          <span className="rounded-full bg-brand-orange/10 px-2.5 py-0.5 text-[10px] font-bold uppercase text-brand-orange">
-            {hidden > 0
-              ? `${orders.length} of ${allRounds.length} rounds`
-              : `${session.batchCount ?? allRounds.length} rounds`}
-          </span>
+          {/* Hidden when nothing has reached the floor yet but a round is awaiting the
+              restaurant — "0 rounds" beside "1 awaiting restaurant" reads as a contradiction. */}
+          {allRounds.length > 0 || !(session.awaitingApprovalCount > 0) ? (
+            <span className="rounded-full bg-brand-orange/10 px-2.5 py-0.5 text-[10px] font-bold uppercase text-brand-orange">
+              {hidden > 0
+                ? `${orders.length} of ${allRounds.length} rounds`
+                : // Rounds on the floor (cancelled ones included, as they are listed) — not
+                  // batchCount, which also counts rounds still awaiting the restaurant.
+                  `${allRounds.length} ${allRounds.length === 1 ? "round" : "rounds"}`}
+            </span>
+          ) : null}
           {settled ? (
             <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700">
               Paid
+            </span>
+          ) : null}
+          {!settled && session.awaitingApprovalCount > 0 ? (
+            <span
+              className="rounded-full bg-[#FCE9E4] px-2.5 py-0.5 text-[10px] font-bold uppercase text-brand-maroon"
+              title="The guest ordered from the table QR — it reaches you once the restaurant accepts it"
+            >
+              {session.awaitingApprovalCount} awaiting restaurant
             </span>
           ) : null}
         </div>
@@ -233,7 +250,9 @@ function SessionCard({
       <div className="space-y-3 px-5 py-4">
         {orders.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Table is open with no orders yet.
+            {!settled && session.awaitingApprovalCount > 0
+              ? "The guest has ordered — waiting for the restaurant to accept it."
+              : "Table is open with no orders yet."}
           </p>
         ) : (
           orders.map((o) => {
@@ -332,7 +351,7 @@ function SessionCard({
           </div>
           {bill.ready ? null : (
             <p className="mt-2 text-center text-[11px] text-muted-foreground">
-              {bill.reason} — the bill can be generated once every round is served.
+              {bill.reason} — the bill can be generated once every round is accepted and served.
             </p>
           )}
           </>

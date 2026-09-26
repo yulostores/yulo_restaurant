@@ -1,7 +1,9 @@
 // Cancellations (/cancellations) — GET /api/owner/:rId/orders?status=cancelled.
 //
-// The API exposes no cancellation-reason, refund or approval resource, so this
-// screen reports the cancelled orders it can see. See API-GAPS.md.
+// Each order carries who ended it (`cancelledBy`: restaurant / customer / system — the
+// approval timeout — / kitchen …), the reason the customer was shown, and
+// `refundStatus: "pending"` when it had already been paid online. Orders cancelled before
+// those fields existed show "Cancelled" with no reason.
 
 import { useMemo, useState } from "react";
 import { Search, XCircle } from "lucide-react";
@@ -9,6 +11,8 @@ import { Search, XCircle } from "lucide-react";
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { useOwnerOrdersPage } from "@/hooks/owner/useOrders";
 import DashboardLayout from "@/components/DashboardLayout";
+import { cancelledByLabel } from "@/components/OrderDetailsDialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -70,7 +74,8 @@ export default function Cancellations() {
     if (!term) return orders;
     return orders.filter((o) =>
       String(o._id).toLowerCase().includes(term) ||
-      (o.items ?? []).some((i) => (i.name ?? "").toLowerCase().includes(term)),
+      (o.items ?? []).some((i) => (i.name ?? "").toLowerCase().includes(term)) ||
+      (o.cancellationReason ?? "").toLowerCase().includes(term),
     );
   }, [orders, search]);
 
@@ -136,6 +141,7 @@ export default function Cancellations() {
                   <TableHead className="pl-6">Order</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Items</TableHead>
+                  <TableHead>Cancelled</TableHead>
                   <TableHead>Placed</TableHead>
                   <TableHead className="pr-6 text-right">Value</TableHead>
                 </TableRow>
@@ -155,6 +161,17 @@ export default function Cancellations() {
                     <TableCell className="max-w-[280px] truncate">
                       {(o.items ?? []).map((i) => `${i.quantity}× ${i.name}`).join(", ") || "—"}
                     </TableCell>
+                    <TableCell className="max-w-[300px]">
+                      <p className="text-sm font-medium">{cancelledByLabel(o)}</p>
+                      {o.cancellationReason ? (
+                        <p className="truncate text-xs text-muted-foreground" title={o.cancellationReason}>
+                          {o.cancellationReason}
+                        </p>
+                      ) : null}
+                      {o.refundStatus === "pending" ? (
+                        <Badge variant="warn" className="mt-1">Refund pending</Badge>
+                      ) : null}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatDateTime(o.createdAt)}
                     </TableCell>
@@ -165,7 +182,7 @@ export default function Cancellations() {
                 ))}
                 {visible.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                    <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                       {isLoading ? "Loading…" : "No cancelled orders. Nice."}
                     </TableCell>
                   </TableRow>

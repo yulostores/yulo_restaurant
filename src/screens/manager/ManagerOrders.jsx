@@ -31,8 +31,8 @@ import { useOwnerOrdersPage } from "@/hooks/owner/useOrders";
 // Mirrors the order lifecycle the API documents.
 const STATUS_TABS = [
   { value: "",                 label: "All" },
-  { value: "placed",           label: "Placed" },
-  { value: "confirmed",        label: "Confirmed" },
+  { value: "placed",           label: "Awaiting acceptance" },
+  { value: "confirmed",        label: "Accepted" },
   { value: "preparing",        label: "Preparing" },
   { value: "ready",            label: "Ready" },
   { value: "served",           label: "Served" },

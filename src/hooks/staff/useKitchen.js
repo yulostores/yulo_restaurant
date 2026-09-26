@@ -7,7 +7,9 @@ export const kitchenKeys = {
   order: (rId, orderId) => ["kitchen", rId, "order", orderId],
 };
 
-// Orders in "placed" or "confirmed", oldest first.
+// Orders the restaurant has accepted ("confirmed") that the kitchen hasn't started yet,
+// oldest acceptance first. A new customer order ("placed") is invisible here until the
+// owner accepts it in Incoming Orders — the server filters it out.
 export function useKitchenQueue(restaurantId) {
   return useQuery({
     queryKey: kitchenKeys.queue(restaurantId),
@@ -18,7 +20,8 @@ export function useKitchenQueue(restaurantId) {
   });
 }
 
-// Kanban buckets — the server returns { placed, confirmed, preparing, ready }.
+// Kanban buckets — the server returns { preparing, ready, completed } (completed = served /
+// out for delivery / delivered today, newest first, capped at 20).
 export function useKitchenBoard(restaurantId) {
   return useQuery({
     queryKey: kitchenKeys.board(restaurantId),
@@ -26,10 +29,9 @@ export function useKitchenBoard(restaurantId) {
       staffApi.getBoard(restaurantId).then((r) => {
         const d = r.data.data ?? {};
         return {
-          placed:    d.placed    ?? [],
-          confirmed: d.confirmed ?? [],
           preparing: d.preparing ?? [],
           ready:     d.ready     ?? [],
+          completed: d.completed ?? [],
         };
       }),
     enabled: !!restaurantId,
@@ -63,29 +65,25 @@ export function useUpdateOrderStatus(restaurantId) {
       const prevBoard = qc.getQueryData(kitchenKeys.board(restaurantId));
       const prevQueue = qc.getQueryData(kitchenKeys.queue(restaurantId));
 
+      // Move the ticket optimistically. One starting "Start preparing" lives in the queue,
+      // not on the board, so it is pulled from there into `preparing`.
+      const queued = (prevQueue ?? []).find((o) => String(o._id) === String(orderId));
       qc.setQueryData(kitchenKeys.board(restaurantId), (old) => {
         if (!old) return old;
-        const all = [
-          ...(old.placed ?? []),
-          ...(old.confirmed ?? []),
-          ...(old.preparing ?? []),
-          ...(old.ready ?? []),
-        ].map((o) => (String(o._id) === String(orderId) ? { ...o, status: newStatus } : o));
+        const all = [...(old.preparing ?? []), ...(old.ready ?? []), ...(queued ? [queued] : [])]
+          .map((o) => (String(o._id) === String(orderId) ? { ...o, status: newStatus } : o));
 
         return {
-          placed:    all.filter((o) => o.status === "placed"),
-          confirmed: all.filter((o) => o.status === "confirmed"),
+          ...old,
           preparing: all.filter((o) => o.status === "preparing"),
           ready:     all.filter((o) => o.status === "ready"),
         };
       });
 
-      // The queue only holds placed/confirmed — drop the order once it moves on.
-      if (!["placed", "confirmed"].includes(newStatus)) {
-        qc.setQueryData(kitchenKeys.queue(restaurantId), (old) =>
-          (old ?? []).filter((o) => String(o._id) !== String(orderId)),
-        );
-      }
+      // The queue only holds accepted-but-not-started tickets — drop it once it moves on.
+      qc.setQueryData(kitchenKeys.queue(restaurantId), (old) =>
+        (old ?? []).filter((o) => String(o._id) !== String(orderId)),
+      );
 
       return { prevBoard, prevQueue };
     },

@@ -150,12 +150,17 @@ export function BillOrderHistory({ bill, className }) {
     <ol className={cn("space-y-3", className)}>
       {batches.map((batch, i) => {
         const cancelled = batch.status === "cancelled";
+        // A round the restaurant hasn't accepted yet is on the history but NOT in the
+        // total (the server's isBilledOrder) — shown like a voided round, and said why,
+        // so the rounds on screen still add up to the bill.
+        const awaiting = batch.status === "placed";
+        const unbilled = cancelled || awaiting;
         return (
           <li
             key={batch.orderId ?? i}
             className={cn(
               "rounded-xl border border-brand-cream/60 bg-white p-3",
-              cancelled && "opacity-70",
+              unbilled && "opacity-70",
             )}
           >
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -171,7 +176,7 @@ export function BillOrderHistory({ bill, className }) {
               <span
                 className={cn(
                   "text-sm font-semibold",
-                  cancelled && "text-muted-foreground line-through",
+                  unbilled && "text-muted-foreground line-through",
                 )}
               >
                 {formatMoney(batch.batchTotal)}
@@ -181,7 +186,13 @@ export function BillOrderHistory({ bill, className }) {
             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
               {batch.placedAt ? <span>{formatTime(batch.placedAt)}</span> : null}
               <span>{placedByLabel(batch)}</span>
-              {batch.status ? <span className="capitalize">{humanize(batch.status)}</span> : null}
+              {awaiting ? (
+                <span className="font-semibold text-brand-maroon">
+                  Awaiting restaurant acceptance · not charged yet
+                </span>
+              ) : batch.status ? (
+                <span className="capitalize">{humanize(batch.status)}</span>
+              ) : null}
               {batch.itemCount ? <span>{batch.itemCount} items</span> : null}
             </div>
 
@@ -189,14 +200,14 @@ export function BillOrderHistory({ bill, className }) {
               {(batch.items ?? []).map((item, j) => (
                 <li key={`${item.name}-${j}`} className="flex justify-between gap-3">
                   <span className="min-w-0">
-                    <span className={cn(cancelled && "line-through")}>
+                    <span className={cn(unbilled && "line-through")}>
                       {item.quantity} × {item.name}
                     </span>
                     {item.note ? (
                       <span className="block italic text-muted-foreground">{item.note}</span>
                     ) : null}
                   </span>
-                  <span className={cn("shrink-0", cancelled && "line-through")}>
+                  <span className={cn("shrink-0", unbilled && "line-through")}>
                     {formatMoney(item.lineTotal)}
                   </span>
                 </li>
@@ -322,12 +333,20 @@ export default function BillDocument({
         >
           <span>
             View details
-            {bill.orderCount ? (
+            {bill.orderCount || bill.awaitingApprovalCount ? (
               <span className="ml-1.5 font-normal text-muted-foreground">
-                · {bill.orderCount} {bill.orderCount === 1 ? "round" : "rounds"}
-                {bill.cancelledOrderCount
-                  ? `, ${bill.cancelledOrderCount} cancelled`
-                  : ""}
+                ·{" "}
+                {[
+                  bill.orderCount
+                    ? `${bill.orderCount} ${bill.orderCount === 1 ? "round" : "rounds"}`
+                    : null,
+                  bill.cancelledOrderCount ? `${bill.cancelledOrderCount} cancelled` : null,
+                  bill.awaitingApprovalCount
+                    ? `${bill.awaitingApprovalCount} awaiting acceptance`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
               </span>
             ) : null}
           </span>

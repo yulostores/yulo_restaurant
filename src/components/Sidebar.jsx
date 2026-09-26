@@ -16,12 +16,14 @@ import {
   Lock,
   CheckCircle2,
   X,
+  BellRing,
 } from "lucide-react";
 
 import RestaurantLogo from "@/components/RestaurantLogo";
 import { cn } from "@/lib/utils";
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { isAlwaysAllowed } from "@/lib/approval";
+import { usePendingOrders } from "@/hooks/owner/useOrderApproval";
 
 const NAV_SECTIONS = [
   {
@@ -39,6 +41,8 @@ const NAV_SECTIONS = [
   {
     title: "Orders Management",
     items: [
+      // Customer orders wait here for accept/reject before reaching the kitchen.
+      { to: "/incoming-orders", label: "Incoming Orders", icon: BellRing, badge: "pending" },
       { to: "/orders", label: "Manage Orders", icon: ReceiptText },
       { to: "/bill", label: "Bills", icon: Receipt },
       { to: "/cancellations", label: "Cancellations", icon: XCircle },
@@ -78,7 +82,7 @@ function isActive(pathname, to) {
   return pathname === to;
 }
 
-function NavItem({ icon: Icon, label, active, locked, onClick }) {
+function NavItem({ icon: Icon, label, active, locked, onClick, badge }) {
   return (
     <button
       type="button"
@@ -96,6 +100,11 @@ function NavItem({ icon: Icon, label, active, locked, onClick }) {
     >
       <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
       <span className="flex-1">{label}</span>
+      {!locked && badge > 0 ? (
+        <span className="min-w-[20px] rounded-full bg-brand-maroon px-1.5 py-0.5 text-center text-[11px] font-bold leading-none text-white">
+          {badge > 99 ? "99+" : badge}
+        </span>
+      ) : null}
       {locked ? <Lock className="h-3.5 w-3.5 shrink-0" /> : null}
     </button>
   );
@@ -104,7 +113,10 @@ function NavItem({ icon: Icon, label, active, locked, onClick }) {
 export default function Sidebar({ isOpen, onClose }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { logout, restaurant, isApproved } = useOwnerAuth();
+  const { logout, restaurant, restaurantId, isApproved } = useOwnerAuth();
+  // Same polled query as the Incoming Orders page and the alert strip (one request).
+  const { data: pending } = usePendingOrders(restaurantId, { enabled: isApproved });
+  const badges = { pending: pending?.count ?? 0 };
   // Falls back to the product name only until the owner has a restaurant on file
   // (fresh signup, pre-approval) — otherwise the sidebar carries their own brand.
   const storeName = restaurant?.name || "Yulo Stores";
@@ -192,6 +204,7 @@ export default function Sidebar({ isOpen, onClose }) {
                     // Mirrors ApprovalGate: everything but Store Settings and
                     // Profile stays locked until the restaurant is approved.
                     locked={!isApproved && !isAlwaysAllowed(item.to)}
+                    badge={item.badge ? badges[item.badge] : undefined}
                     onClick={() => handleNav(item.to)}
                   />
                 ))}

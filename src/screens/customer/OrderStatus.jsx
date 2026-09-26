@@ -16,8 +16,10 @@ const DONE = ["served", "delivered", "cancelled"];
 // the first four steps, so the tail is chosen per order type rather than showing a diner
 // a delivery step that will never happen.
 const COMMON_STEPS = [
-  { key: "placed",    label: "Order placed", note: "We've received your order." },
-  { key: "confirmed", label: "Confirmed",    note: "The restaurant accepted it." },
+  // 'placed' = sent, waiting for the restaurant to accept it (the owner portal's
+  // Incoming Orders). Nothing is cooked until it moves on to 'confirmed'.
+  { key: "placed",    label: "Waiting for the restaurant", note: "Sent — the restaurant will accept it shortly." },
+  { key: "confirmed", label: "Accepted",     note: "The restaurant accepted your order." },
   { key: "preparing", label: "Preparing",    note: "Your food is being cooked." },
 ];
 
@@ -78,7 +80,9 @@ export default function OrderStatus() {
                 Order #{String(order._id).slice(-6).toUpperCase()}
               </p>
               <p className="text-lg font-bold capitalize">
-                {(order.status ?? "").replace(/_/g, " ")}
+                {order.status === "placed"
+                  ? "Waiting for the restaurant"
+                  : (order.status ?? "").replace(/_/g, " ")}
               </p>
             </div>
             <span className="text-lg font-bold text-brand-red">
@@ -96,10 +100,27 @@ export default function OrderStatus() {
           <section className="flex items-start gap-3 rounded-2xl border border-brand-cream/70 bg-[#FCE9E4] p-4">
             <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-brand-maroon" />
             <div>
-              <p className="font-bold text-brand-maroon">Order cancelled</p>
-              <p className="text-sm text-brand-maroon/80">
-                Contact the restaurant if you weren&apos;t expecting this.
+              <p className="font-bold text-brand-maroon">
+                {order.cancelledBy === "restaurant"
+                  ? "The restaurant couldn't take this order"
+                  : order.cancelledBy === "system"
+                    ? "The restaurant didn't respond in time"
+                    : order.cancelledBy === "customer"
+                      ? "You cancelled this order"
+                      : "Order cancelled"}
               </p>
+              {order.cancellationReason && order.cancelledBy !== "customer" ? (
+                <p className="text-sm text-brand-maroon/80">Reason: {order.cancellationReason}</p>
+              ) : null}
+              {order.refundStatus === "pending" ? (
+                <p className="text-sm font-semibold text-brand-maroon">
+                  You paid online — your refund is being processed.
+                </p>
+              ) : (
+                <p className="text-sm text-brand-maroon/80">
+                  Contact the restaurant if you weren&apos;t expecting this.
+                </p>
+              )}
             </div>
           </section>
         ) : (

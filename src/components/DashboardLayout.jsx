@@ -6,6 +6,7 @@ import { Menu } from "lucide-react";
 
 import RestaurantLogo from "@/components/RestaurantLogo";
 import Sidebar from "@/components/Sidebar";
+import IncomingOrdersAlert from "@/components/IncomingOrdersAlert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useOwnerAuthSafe } from "@/context/OwnerAuthContext";
 
@@ -71,6 +72,9 @@ export default function DashboardLayout({ children }) {
           <Topbar onMenuToggle={() => setSidebarOpen((o) => !o)} />
         </div>
         <main className="flex flex-col gap-5 px-4 pb-12 pt-2 sm:px-6 lg:px-7">
+          {/* Customer orders waiting for acceptance — shown on every screen but the inbox
+              itself, since an unanswered order auto-cancels after a few minutes. */}
+          <IncomingOrdersAlert />
           {children}
         </main>
       </div>

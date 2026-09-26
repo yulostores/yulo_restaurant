@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { ownerApi } from "@/api/owner.api";
 
-// The owner view is read-only — order status transitions belong to the kitchen
-// (staff) and waiter endpoints, and payment is closed out by the waiter's mark-paid call.
+// Read-only order lists. The owner's one write — accepting or rejecting a new customer
+// order — lives in ./useOrderApproval.js; later transitions belong to the kitchen (staff)
+// and waiter endpoints, and payment is closed out by the waiter's mark-paid call.
 export const orderKeys = {
   all:     (rId)       => ["owner-orders", rId],
   list:    (rId, p={}) => ["owner-orders", rId, "list", p],

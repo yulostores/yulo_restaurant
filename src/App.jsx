@@ -9,6 +9,7 @@ import QrManagement from "./screens/QrManagement";
 import Offers from "./screens/Offers";
 import LiveMonitor from "./screens/LiveMonitor";
 import ManageOrders from "./screens/ManageOrders";
+import IncomingOrders from "./screens/IncomingOrders";
 import Cancellations from "./screens/Cancellations";
 import MenuItems from "./screens/MenuItems";
 import StoreSettings from "./screens/StoreSettings";
@@ -45,6 +46,7 @@ export default function App() {
       <Route path="/menu-management" element={<OwnerRoute><ApprovalGate><MenuManagement /></ApprovalGate></OwnerRoute>} />
       <Route path="/qr" element={<OwnerRoute><ApprovalGate><QrManagement /></ApprovalGate></OwnerRoute>} />
       <Route path="/offers" element={<OwnerRoute><ApprovalGate><Offers /></ApprovalGate></OwnerRoute>} />
+      <Route path="/incoming-orders" element={<OwnerRoute><ApprovalGate><IncomingOrders /></ApprovalGate></OwnerRoute>} />
       <Route path="/orders" element={<OwnerRoute><ApprovalGate><ManageOrders /></ApprovalGate></OwnerRoute>} />
       <Route path="/bill" element={<OwnerRoute><ApprovalGate><BillDetails /></ApprovalGate></OwnerRoute>} />
       <Route path="/cancellations" element={<OwnerRoute><ApprovalGate><Cancellations /></ApprovalGate></OwnerRoute>} />

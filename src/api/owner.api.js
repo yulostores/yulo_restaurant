@@ -66,13 +66,28 @@ export const ownerApi = {
   // Always returns the last 10 orders — takes no params.
   getRecentOrders: (rId) => client.get(`/owner/${rId}/dashboard/recent-orders`),
 
-  // ── Orders (read-only from owner view) ───────────────────────────
+  // ── Orders ───────────────────────────────────────────────────────
   // Every order carries its resolved `table`, `staff` (who rang it in), `waiter`
   // (assigned to the sitting) and `statusHistory` — see the server's
   // services/orderView.service.js.
   // params: { status, type: "dine_in"|"delivery", tableId, page, limit }
   listOrders: (rId, params = {}) => client.get(`/owner/${rId}/orders`, { params }),
   getOrder:   (rId, orderId)     => client.get(`/owner/${rId}/orders/${orderId}`),
+
+  // ── Order approval ───────────────────────────────────────────────
+  // A customer order (delivery app, table QR) arrives as status "placed" and waits here:
+  // the kitchen, the waiters and rider search only see it once the owner accepts it.
+  // Waiter-placed orders skip this step. Unanswered orders auto-cancel after the
+  // server's ORDER_APPROVAL_TIMEOUT_MINUTES (default 15).
+  //
+  // Pending: oldest first, { orders[], count, rejectionReasons[] }; each order also
+  // carries `awaitingPayment` (online, unpaid — accepting it answers 409 PAYMENT_PENDING).
+  listPendingOrders: (rId) => client.get(`/owner/${rId}/orders/pending`),
+  // 409 ORDER_ALREADY_DECIDED if it was accepted/rejected/cancelled/expired meanwhile.
+  acceptOrder: (rId, orderId) => client.patch(`/owner/${rId}/orders/${orderId}/accept`),
+  // reason: 3–200 chars, shown to the customer. The bare word "Other" is refused (400).
+  rejectOrder: (rId, orderId, reason) =>
+    client.patch(`/owner/${rId}/orders/${orderId}/reject`, { reason }),
 
   // Dine-in orders grouped table -> sitting -> rounds.
   // scope: "active" (default) | "today" | "all"

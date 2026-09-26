@@ -12,11 +12,12 @@ function idempotencyKey() {
 
 export const staffApi = {
   // ── Kitchen / KDS (role: chef) ───────────────────────────────────
-  // Active orders with status "placed" or "confirmed", oldest first.
+  // Orders the restaurant has accepted ("confirmed") and the kitchen hasn't started.
+  // New customer orders ("placed") never appear — the owner accepts them first.
   getQueue: (restaurantId) =>
     client.get(`/staff/${restaurantId}/kitchen/queue`, S),
 
-  // Kanban buckets: { placed, confirmed, preparing, ready }
+  // Kanban buckets: { preparing, ready, completed }
   getBoard: (restaurantId) =>
     client.get(`/staff/${restaurantId}/kitchen/board`, S),
 
@@ -25,11 +26,12 @@ export const staffApi = {
 
   // Optimistic concurrency control — the server rejects the write with
   // 409 CONCURRENT_UPDATE if `currentStatus` no longer matches.
-  // Allowed transitions (API.md):
-  //   placed    -> confirmed | cancelled
+  // Allowed transitions for the kitchen (API.md). 'placed' -> 'confirmed' is NOT the
+  // kitchen's — it is the owner accepting the order; touching a 'placed' order answers
+  // 409 ORDER_AWAITING_APPROVAL.
   //   confirmed -> preparing | cancelled
-  //   preparing -> ready     | cancelled
-  //   ready     -> out_for_delivery | delivered | cancelled
+  //   preparing -> ready     | served | cancelled
+  //   ready     -> served | out_for_delivery | delivered | cancelled
   updateOrderStatus: (restaurantId, orderId, currentStatus, newStatus) =>
     client.patch(
       `/staff/${restaurantId}/kitchen/orders/${orderId}/status`,
@@ -70,8 +72,9 @@ export const staffApi = {
 
   // Waiter-driven status change. The waiter owns the "served" step — the food
   // reaching the table — which the chef KDS has no way to know about. Allowed:
-  // confirmed | preparing | ready | served, and the server still enforces the
-  // same transition table the KDS uses, so a step can never be skipped backwards.
+  // preparing | ready | served, and the server still enforces the same transition
+  // table the KDS uses, so a step can never be skipped backwards. A round still
+  // awaiting the restaurant's approval answers 409 ORDER_AWAITING_APPROVAL.
   waiterUpdateOrderStatus: (restaurantId, orderId, newStatus) =>
     client.patch(`/staff/${restaurantId}/waiter/orders/${orderId}/status`, { newStatus }, S),
 

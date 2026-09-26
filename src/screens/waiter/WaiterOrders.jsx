@@ -26,14 +26,21 @@ const STATUS_TONE = {
   out_for_delivery: "bg-[#FFF3E0] text-[#D9480F]",
   delivered:        "bg-[#F3F4F6] text-[#5F5F5F]",
   cancelled:        "bg-[#FCE9E4] text-brand-maroon",
+  awaiting_approval: "bg-[#FCE9E4] text-brand-maroon",
+  open:             "bg-[#F3F4F6] text-[#5F5F5F]",
 };
 
 // The furthest-behind ticket sets the table's headline status.
-const STATUS_RANK = ["placed", "confirmed", "preparing", "ready", "served", "delivered"];
+// Rounds awaiting the restaurant's approval aren't in `orders` (the server keeps them off
+// the floor) — a table with nothing else reads "Awaiting restaurant".
+const STATUS_RANK = ["confirmed", "preparing", "ready", "served", "delivered"];
 
-function tableStatus(orders = []) {
+function tableStatus(orders = [], awaitingApprovalCount = 0) {
+  // A round still with the restaurant is the furthest-behind thing at the table — the
+  // guest is waiting on it even if earlier rounds have been served.
+  if (awaitingApprovalCount > 0) return "awaiting_approval";
   const live = orders.filter((o) => o.status !== "cancelled");
-  if (live.length === 0) return "placed";
+  if (live.length === 0) return "open";
   return live.reduce((worst, o) => {
     const a = STATUS_RANK.indexOf(worst);
     const b = STATUS_RANK.indexOf(o.status);
@@ -150,10 +157,12 @@ export default function WaiterOrders() {
         return {
           id: s._id,
           label: s.tableNumber ?? tableLabelById[s.tableId] ?? "—",
-          status: tableStatus(orders),
+          status: tableStatus(orders, s.awaitingApprovalCount),
           orders,
           guestCount: s.guestCount,
-          batches: s.batchCount ?? orders.length,
+          // Rounds on the floor (cancelled ones included, as they are listed), not
+          // batchCount, which also counts rounds still awaiting the restaurant.
+          batches: orders.length,
           total: s.runningTotal ?? 0,
         };
       }),

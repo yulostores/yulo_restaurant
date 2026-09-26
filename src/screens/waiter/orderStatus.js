@@ -1,10 +1,14 @@
 // How the floor reads — and moves — a ticket.
 //
-// The kitchen drives the first three steps from its own board (ChefDashboard's
-// "Accept Order" → placed→confirmed, "Start Preparing" → confirmed→preparing,
-// "Mark as Ready" → preparing→ready). None of those are the waiter's to take, so the
-// floor is shown one word for all of them: "Preparing". Only the chef can turn that into
-// "Prepared", and only then is there anything for the waiter to do.
+// A customer's round (table QR) first waits for the RESTAURANT to accept it in the owner
+// portal's Incoming Orders; until then the server leaves it out of the waiter's sessions
+// entirely and only reports how many are waiting (`session.awaitingApprovalCount`). A
+// round the waiter rings in themselves skips that step — it arrives already accepted.
+//
+// From there the kitchen drives the next steps from its own board ("Start Preparing" →
+// confirmed→preparing, "Mark as Ready" → preparing→ready). None of those are the waiter's
+// to take, so the floor is shown one word for all of them: "Preparing". Only the chef can
+// turn that into "Prepared", and only then is there anything for the waiter to do.
 //
 // That leaves the waiter exactly one action — carrying a prepared round to the table and
 // marking it served — which is why this module exposes a single action rather than the
@@ -14,7 +18,6 @@
 // "preparing": from the floor's side an accepted-but-not-started round and one on the
 // pass look the same — the food isn't ready yet.
 const FLOOR_STATUS = {
-  placed: "preparing",
   confirmed: "preparing",
   preparing: "preparing",
   ready: "prepared",
@@ -22,6 +25,10 @@ const FLOOR_STATUS = {
 };
 
 const FLOOR_STATUS_LABEL = {
+  // Table-level only (WaiterOrders): a sitting whose only rounds are still with the
+  // restaurant for approval, or that hasn't ordered at all.
+  awaiting_approval: "Awaiting restaurant",
+  open: "No orders yet",
   preparing: "Preparing",
   prepared: "Prepared",
   served: "Served",
@@ -109,21 +116,31 @@ export function pendingRounds(session) {
 // to show the waiter instead of a button that could only fail. The server enforces the
 // same rule (409 ORDERS_PENDING from the waiter bill endpoints), so this is the honest
 // reading of the session rather than a second, drifting copy of the rule.
+//
+// A round still awaiting the restaurant's approval isn't in `session.orders` at all (the
+// server hides it from the floor) but it holds the bill open all the same — the server
+// answers 409 ORDERS_PENDING until the owner accepts or rejects it — so it is counted
+// from `session.awaitingApprovalCount`.
 export function billReadiness(session) {
+  const awaiting = session?.awaitingApprovalCount ?? 0;
   const orders = (session?.orders ?? []).filter((o) => o?.status !== "cancelled");
-  if (orders.length === 0) {
+  if (orders.length === 0 && awaiting === 0) {
     return { ready: false, pendingCount: 0, reason: "No rounds ordered at this table yet" };
   }
 
   const pending = pendingRounds(session);
-  if (pending.length === 0) return { ready: true, pendingCount: 0, reason: "" };
+  if (pending.length === 0 && awaiting === 0) return { ready: true, pendingCount: 0, reason: "" };
 
-  return {
-    ready: false,
-    pendingCount: pending.length,
-    reason:
-      pending.length === 1
-        ? "1 round still to be served"
-        : `${pending.length} rounds still to be served`,
-  };
+  const reasons = [];
+  if (pending.length > 0) {
+    reasons.push(pending.length === 1 ? "1 round still to be served" : `${pending.length} rounds still to be served`);
+  }
+  if (awaiting > 0) {
+    reasons.push(
+      awaiting === 1
+        ? "1 order waiting for the restaurant to accept"
+        : `${awaiting} orders waiting for the restaurant to accept`,
+    );
+  }
+  return { ready: false, pendingCount: pending.length + awaiting, reason: reasons.join(" · ") };
 }

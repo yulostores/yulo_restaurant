@@ -240,7 +240,10 @@ export default function CustomerProfile() {
                     #{String(o._id).slice(-6).toUpperCase()}
                   </p>
                   <p className="text-xs capitalize text-muted-foreground">
-                    {(o.status ?? "").replace(/_/g, " ")}
+                    {/* 'placed' now means the restaurant hasn't accepted it yet. */}
+                    {o.status === "placed"
+                      ? "Waiting for the restaurant"
+                      : (o.status ?? "").replace(/_/g, " ")}
                     {o.createdAt
                       ? ` · ${new Date(o.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`
                       : ""}

@@ -15,9 +15,11 @@ import { X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 
+// 'placed' is a customer order the restaurant hasn't accepted yet (Incoming Orders);
+// 'confirmed' is accepted, not yet started by the kitchen.
 const STATUS_LABEL = {
-  placed: "Placed",
-  confirmed: "Confirmed",
+  placed: "Awaiting acceptance",
+  confirmed: "Accepted",
   preparing: "Preparing",
   ready: "Ready to serve",
   served: "Served",
@@ -36,6 +38,7 @@ export function statusVariant(status) {
   if (key === "ready") return "info";
   if (key === "preparing" || key === "out_for_delivery") return "warn";
   if (key === "cancelled") return "danger";
+  if (key === "placed") return "danger";
   return "muted";
 }
 
@@ -53,6 +56,13 @@ export function formatTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// Whole minutes since `value` (0 for missing/future). `now` is injectable so a ticking
+// screen can pass one clock to every card.
+export function minutesSince(value, now = Date.now()) {
+  if (!value) return 0;
+  return Math.max(0, Math.floor((now - new Date(value).getTime()) / 60_000));
 }
 
 export function formatDateTime(value) {
@@ -94,6 +104,21 @@ export function customerLabel(order) {
   // A dine-in walk-in who ordered without giving details is genuinely anonymous — say so
   // plainly rather than showing an em dash that reads as missing data.
   return order?.type === "dine_in" ? "Walk-in guest" : null;
+}
+
+const CANCELLED_BY = {
+  restaurant: "Rejected by the restaurant",
+  customer: "Cancelled by the customer",
+  system: "Cancelled automatically — not accepted in time",
+  kitchen: "Cancelled by the kitchen",
+  waiter: "Cancelled by a waiter",
+  admin: "Cancelled by Yulo support",
+};
+
+// Who ended a cancelled order, in words. Orders cancelled before the field existed have no
+// `cancelledBy` and read simply "Cancelled".
+export function cancelledByLabel(order) {
+  return CANCELLED_BY[order?.cancelledBy] ?? "Cancelled";
 }
 
 export function orderCode(order) {
@@ -203,6 +228,21 @@ export default function OrderDetailsDialog({ order, onClose, action }) {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {order.status === "placed" ? (
+            <p className="mb-4 rounded-xl bg-[#FCE9E4] px-3.5 py-2.5 text-sm text-brand-maroon">
+              Waiting for the restaurant to accept this order — accept or reject it from
+              Incoming Orders. The kitchen and waiters can't see it until then.
+            </p>
+          ) : null}
+          {order.status === "cancelled" ? (
+            <div className="mb-4 rounded-xl bg-[#FCE9E4] px-3.5 py-2.5 text-sm text-brand-maroon">
+              <p className="font-semibold">{cancelledByLabel(order)}</p>
+              {order.cancellationReason ? <p>Reason: {order.cancellationReason}</p> : null}
+              {order.refundStatus === "pending" ? (
+                <p className="mt-1 font-semibold">Paid online — refund pending.</p>
+              ) : null}
+            </div>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-3">
             <Field label="Table">{order.tableNumber ? `Table ${order.tableNumber}` : "—"}</Field>
             <Field label="Customer">{customerLabel(order)}</Field>
@@ -210,6 +250,9 @@ export default function OrderDetailsDialog({ order, onClose, action }) {
             <Field label="Table waiter">{order.waiter?.name ?? "Not assigned"}</Field>
             <Field label="Round">{order.round ?? order.batchNumber ?? "—"}</Field>
             <Field label="Placed at">{formatDateTime(order.createdAt)}</Field>
+            {order.acceptedAt ? (
+              <Field label="Accepted at">{formatDateTime(order.acceptedAt)}</Field>
+            ) : null}
             <Field label="Served at">{order.servedAt ? formatDateTime(order.servedAt) : "—"}</Field>
             {order.session ? (
               <>

@@ -6,6 +6,7 @@ import { useStaffAuth } from "@/context/StaffAuthContext";
 import { useKitchenQueue, useKitchenBoard, useUpdateOrderStatus } from "@/hooks/staff/useKitchen";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import OrderDetailsDialog from "@/components/OrderDetailsDialog";
+import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
 /* ── Normalize backend Order → UI shape ──────────────────────────────
@@ -33,6 +34,8 @@ function normalizeOrder(o) {
     status:       o.status,
     instructions: o.specialInstructions ?? "",
     createdAt:    o.createdAt ?? null,
+    // When the restaurant accepted it — the moment it actually reached the kitchen.
+    acceptedAt:   o.acceptedAt ?? null,
     batches:      null,
     // Full enriched order (customer, staff, statusHistory, deliveryAddress, subtotal, ...)
     // for the shared OrderDetailsDialog — the fields above are just the board-card summary.
@@ -41,10 +44,13 @@ function normalizeOrder(o) {
 }
 
 /* ── helpers ── */
-// Minutes since the ticket was fired — the API carries no prep estimate.
+// Minutes since the ticket reached the kitchen — the restaurant accepting it, not the
+// customer placing it (which can be minutes earlier while it sat in Incoming Orders).
+// The API carries no prep estimate.
 function waitingMinutes(order) {
-  if (!order.createdAt) return 0;
-  return Math.max(0, Math.round((Date.now() - new Date(order.createdAt).getTime()) / 60000));
+  const since = order.acceptedAt ?? order.createdAt;
+  if (!since) return 0;
+  return Math.max(0, Math.round((Date.now() - new Date(since).getTime()) / 60000));
 }
 
 function orderLabel(order) {
@@ -69,16 +75,22 @@ function isTakeaway(order) {
 }
 
 function statusOf(order) {
-  return order.status ?? "placed";
+  return order.status ?? "confirmed";
 }
 
 /* ── Upcoming card ── */
+// Every ticket here was already accepted by the restaurant (Incoming Orders in the owner
+// portal) — accepting is not the kitchen's call — so the only step is starting it.
 function UpcomingCard({ order, onAdvance }) {
+  const [busy, setBusy] = useState(false);
   const mins = waitingMinutes(order);
   const take = isTakeaway(order);
-  // placed -> confirmed (accept), confirmed -> preparing (start)
-  const next  = order.status === "placed" ? "confirmed" : "preparing";
-  const label = order.status === "placed" ? "Accept Order" : "Start Preparing";
+
+  async function start() {
+    setBusy(true);
+    await onAdvance(order, "preparing");
+    setBusy(false);
+  }
   return (
     <div className="flex flex-col rounded-2xl border border-brand-cream/70 bg-white p-4 shadow-sm">
       <div className="mb-2 flex items-center justify-between">
@@ -86,7 +98,7 @@ function UpcomingCard({ order, onAdvance }) {
           #{order.number}
         </span>
         <span className={cn("text-[11px] font-bold", mins <= 15 ? "text-brand-orange" : "text-brand-maroon")}>
-          waiting {mins}m
+          accepted {mins}m ago
         </span>
       </div>
       <p className={cn("mb-3 text-base font-bold", take ? "text-brand-orange" : "text-[#24190f]")}>
@@ -99,12 +111,16 @@ function UpcomingCard({ order, onAdvance }) {
           </p>
         ))}
       </div>
+      {order.instructions ? (
+        <p className="mb-3 text-xs italic text-muted-foreground">“{order.instructions}”</p>
+      ) : null}
       <button
         type="button"
-        onClick={() => onAdvance(order, next)}
-        className="w-full rounded-xl bg-brand-gradient py-2.5 text-sm font-bold text-white transition hover:brightness-105 active:scale-[0.98]"
+        disabled={busy}
+        onClick={start}
+        className="w-full rounded-xl bg-brand-gradient py-2.5 text-sm font-bold text-white transition hover:brightness-105 active:scale-[0.98] disabled:opacity-60"
       >
-        {label}
+        {busy ? "Updating…" : "Start Preparing"}
       </button>
     </div>
   );
@@ -126,7 +142,6 @@ function BoardCard({ order, column, onAction, onViewDetails }) {
     <div className={cn(
       "rounded-2xl border bg-white p-4 shadow-sm transition",
       column === "ready"     && "border-emerald-200",
-      column === "confirmed" && "border-[#cddcf0]",
       column === "preparing" && !cancelled && "border-brand-cream/70",
       cancelled              && "border-red-100 opacity-80",
     )}>
@@ -157,22 +172,6 @@ function BoardCard({ order, column, onAction, onViewDetails }) {
           </p>
         ))}
       </div>
-
-      {column === "confirmed" && !cancelled && (
-        <div className="space-y-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => act("preparing")}
-            className="w-full rounded-xl bg-brand-gradient py-2.5 text-sm font-bold text-white transition hover:brightness-105 disabled:opacity-60"
-          >
-            {busy ? "Updating…" : "Start Preparing"}
-          </button>
-          <button type="button" onClick={() => onViewDetails(order)} className="flex w-full items-center justify-center gap-1.5 py-1 text-sm text-muted-foreground hover:text-[#24190f]">
-            <Eye className="h-3.5 w-3.5" /> View Details
-          </button>
-        </div>
-      )}
 
       {column === "preparing" && !cancelled && (
         <div className="space-y-2">
@@ -298,28 +297,35 @@ export default function ChefDashboard() {
 
   const { data: rawQueue, isLoading: queueLoading, error: queueErr } = useKitchenQueue(restaurantId);
   const { data: rawBoard, error: boardErr } = useKitchenBoard(restaurantId);
-  const { mutate: updateStatus } = useUpdateOrderStatus(restaurantId);
+  const { mutateAsync: updateStatus } = useUpdateOrderStatus(restaurantId);
+  const [actionError, setActionError] = useState("");
 
-  // The board endpoint returns four buckets: placed, confirmed, preparing, ready.
-  // The queue holds the same placed+confirmed tickets, oldest first.
+  // The queue holds tickets the restaurant has accepted but the kitchen hasn't started;
+  // the board holds preparing / ready / completed-today. New customer orders are not here
+  // at all until the owner accepts them.
   const upcoming  = (rawQueue ?? []).map(normalizeOrder);
   const preparing = (rawBoard?.preparing ?? []).map(normalizeOrder);
   const ready     = (rawBoard?.ready ?? []).map(normalizeOrder);
-  const accepted  = (rawBoard?.confirmed ?? []).map(normalizeOrder);
+  const completed = rawBoard?.completed ?? [];
   const ongoing   = [...preparing, ...ready];
 
-  const error = (queueErr ?? boardErr)?.message ?? "";
+  const error = actionError || ((queueErr ?? boardErr)?.message ?? "");
 
   // Status writes use optimistic concurrency control — the server needs the
   // status we currently see so it can reject a stale write (409).
-  function advance(order, newStatus) {
-    updateStatus({ orderId: order.id, currentStatus: order.status, newStatus });
+  async function advance(order, newStatus) {
+    setActionError("");
+    try {
+      await updateStatus({ orderId: order.id, currentStatus: order.status, newStatus });
+    } catch (err) {
+      setActionError(errorMessage(err, "Couldn't update that order. Please try again."));
+    }
   }
 
   async function handleMarkReadyFromDialog() {
     if (!viewOrder) return;
     setMarkReadyBusy(true);
-    advance(viewOrder, "ready");
+    await advance(viewOrder, "ready");
     setMarkReadyBusy(false);
     setViewOrder(null);
   }
@@ -360,10 +366,11 @@ export default function ChefDashboard() {
         {/* Stats row */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {[
-            { label: "Upcoming",  value: upcoming.length,  color: "text-brand-orange" },
-            { label: "Accepted",  value: accepted.length,  color: "text-[#1565C0]" },
-            { label: "Preparing", value: preparing.length, color: "text-[#D9480F]" },
-            { label: "Ready",     value: ready.length,     color: "text-emerald-600" },
+            { label: "To start",        value: upcoming.length,  color: "text-brand-orange" },
+            { label: "Preparing",       value: preparing.length, color: "text-[#D9480F]" },
+            { label: "Ready",           value: ready.length,     color: "text-emerald-600" },
+            // The board returns at most the 20 most recent completed tickets.
+            { label: "Completed today", value: completed.length >= 20 ? "20+" : completed.length, color: "text-[#1565C0]" },
           ].map((s) => (
             <div key={s.label} className="rounded-2xl border border-brand-cream/70 bg-white px-5 py-4 shadow-sm">
               <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -375,7 +382,12 @@ export default function ChefDashboard() {
         {/* Upcoming Orders */}
         <section>
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold">Upcoming Orders</h2>
+            <div>
+              <h2 className="text-xl font-bold">Upcoming Orders</h2>
+              <p className="text-xs text-muted-foreground">
+                Accepted by the restaurant and waiting to be started.
+              </p>
+            </div>
             {upcoming.length > 0 && (
               <span className="rounded-full bg-brand-orange/10 px-3 py-1 text-xs font-bold text-brand-orange">
                 {upcoming.length} new
@@ -386,7 +398,7 @@ export default function ChefDashboard() {
             <p className="animate-pulse text-sm text-muted-foreground">Loading…</p>
           ) : upcoming.length === 0 ? (
             <div className="rounded-2xl border border-brand-cream/60 bg-white py-10 text-center text-sm text-muted-foreground">
-              No upcoming orders right now.
+              No accepted orders waiting to be started.
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -400,16 +412,7 @@ export default function ChefDashboard() {
         {/* Preparation Board */}
         <section>
           <h2 className="mb-4 text-xl font-bold">Preparation Board</h2>
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-            <BoardColumn label="Accepted" count={accepted.length} accent="text-[#1565C0]" bg="bg-[#EEF4FB]">
-              {accepted.map((o) => (
-                <BoardCard key={o.id} order={o} column="confirmed" onAction={advance} onViewDetails={setViewOrder} />
-              ))}
-              {accepted.length === 0 && (
-                <p className="py-6 text-center text-sm text-muted-foreground">Nothing accepted yet.</p>
-              )}
-            </BoardColumn>
-
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             <BoardColumn label="Preparing" count={preparing.length} accent="text-brand-orange" bg="bg-[#FFF5EE]">
               {preparing.map((o) => (
                 <BoardCard key={o.id} order={o} column="preparing" onAction={advance} onViewDetails={setViewOrder} />

@@ -91,7 +91,7 @@ export function useMarkPaid(restaurantId) {
 }
 
 // ── Move a ticket along — the waiter's own status transition ─────────
-// newStatus: "confirmed" | "preparing" | "ready" | "served". "served" is the
+// newStatus: "preparing" | "ready" | "served". "served" is the
 // step only the floor can report; the server enforces the same transition
 // table the chef KDS uses.
 export function useUpdateOrderStatus(restaurantId) {

@@ -41,8 +41,9 @@ const BREAKDOWN_COLORS = {
 // Kitchen pipeline buckets — the statuses that still need someone to act. This is also
 // what defines the queue table below, which is why 'served' isn't in it.
 const KITCHEN_BUCKETS = [
-  { key: "placed",    label: "New",       tag: "QUEUED" },
-  { key: "confirmed", label: "Confirmed", tag: "ACCEPTED" },
+  // 'placed' = a customer order the restaurant hasn't accepted yet (Incoming Orders).
+  { key: "placed",    label: "Awaiting acceptance", tag: "NEEDS YOU" },
+  { key: "confirmed", label: "Accepted",            tag: "TO START" },
   { key: "preparing", label: "Preparing", tag: "IN KITCHEN" },
   { key: "ready",     label: "Ready",     tag: "TO SERVE" },
 ];
