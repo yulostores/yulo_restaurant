@@ -7,7 +7,7 @@ import client, { assertPortal } from "./client";
 //
 //   Customer        POST /api/auth/login
 //   Restaurant owner POST /api/owner/auth/login
-//   Staff (PIN)     POST /api/staff/auth/login
+//   Staff (OTP)     POST /api/staff/auth/otp/send, then /otp/verify
 //
 // The platform admin portal is a separate app (yulo_super_admin) and is not
 // served from this client.
@@ -48,21 +48,26 @@ export const authApi = {
     client.post("/owner/auth/login", { email, password }),
   ownerLogout: () => client.post("/owner/auth/logout"),
 
-  // ── Staff (staff code + PIN) ────────────────────────────────────────────
+  // ── Staff (phone + OTP) ─────────────────────────────────────────────────
   // _staff: true tells the interceptor to attach the staff token, not the
   // owner access token. Login and the restaurant picker need no token.
   //
-  // Credentials are issued by the restaurant owner in /staff (StaffManagement):
-  // the auto-assigned staffCode (W01, C02…) plus the PIN the owner set. A staff
-  // code is only unique WITHIN a restaurant, so restaurantId is part of the
-  // identity, not a hint — which is why the picker comes first on the login screen.
+  // Staff sign in with the phone number the owner registered for them in /staff
+  // (StaffManagement) and a one-time code sent to it. The same number can be staff
+  // at more than one restaurant, so restaurantId is part of every login — which is
+  // why the picker comes first on the login screen. A session lasts exactly 24h
+  // (`expiresAt` in the verify response) and is never refreshed.
   staffRestaurantSearch: ({ q, lat, lng, signal }) =>
     client.get("/staff/auth/restaurants", {
       params: { q, ...(lat != null && lng != null ? { lat, lng } : {}) },
       signal,
     }),
-  staffLogin: ({ restaurantId, staffCode, pin }) =>
-    client.post("/staff/auth/login", { restaurantId, staffCode, pin }),
+  // Same answer whether or not the number is staff here. `otpBypass` is set while the
+  // server runs without SMS (any 6-digit code works), `devOtp` in development only.
+  staffOtpSend: ({ restaurantId, phone }) =>
+    client.post("/staff/auth/otp/send", { restaurantId, phone }),
+  staffOtpVerify: ({ restaurantId, phone, code }) =>
+    client.post("/staff/auth/otp/verify", { restaurantId, phone, code }),
   // Re-validates the localStorage token on boot: it outlives deactivation and
   // restaurant suspension, so the cached profile alone is not proof of a session.
   staffSession: () => client.get("/staff/auth/me", { _staff: true }),

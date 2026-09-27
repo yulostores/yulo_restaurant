@@ -197,26 +197,40 @@ client.interceptors.response.use(
     const code = err.response?.data?.code;
     const portal = original.url === undefined ? null : portalForRequest(original);
 
-    // Staff token expired or revoked — clear storage and redirect to login.
-    // The redirect is skipped when the login screen is already mounted: its own
-    // boot check (GET /staff/auth/me) is exactly the call that surfaces a stale
-    // token, and replacing the URL with the one already showing would reload the
-    // page instead of letting StaffAuthContext fall through to the form.
-    if (
+    // Staff session over — the day's 24h token expired, it was revoked, the owner
+    // changed the member's phone or deactivated them (401), or the restaurant was
+    // suspended (403 RESTAURANT_UNAVAILABLE). Clear storage and send them to the login
+    // screen, which says why. Skipped when the login screen is already mounted: its
+    // own boot check (GET /staff/auth/me) is exactly the call that surfaces a stale
+    // token, and replacing the URL with the one already showing would reload the page
+    // instead of letting StaffAuthContext fall through to the form.
+    const staffStatus = err.response?.status;
+    const staffSessionOver =
       portal === "staff" &&
-      (code === "TOKEN_EXPIRED" || code === "INVALID_TOKEN") &&
-      err.response?.status === 401
-    ) {
+      ((staffStatus === 401 && (code === "TOKEN_EXPIRED" || code === "INVALID_TOKEN")) ||
+        (staffStatus === 403 && code === "RESTAURANT_UNAVAILABLE"));
+    if (staffSessionOver) {
+      // Only if the token that just failed is still the one stored. Another tab may have
+      // signed in since (a new day's session); an old tab's stale request must not wipe
+      // that newer session out of shared storage.
+      const failedToken = String(original.headers?.Authorization ?? "").replace(/^Bearer /, "");
+      const storedToken = localStorage.getItem("yulo_staff_token");
+      if (storedToken && failedToken && storedToken !== failedToken) {
+        // This tab is simply behind: reload it into the session that's stored now.
+        if (!window.location.pathname.startsWith("/staff/login")) window.location.reload();
+        return Promise.reject(normalise(err, code));
+      }
       setStaffToken(null);
       localStorage.removeItem("yulo_staff_profile");
       if (!window.location.pathname.startsWith("/staff/login")) {
-        window.location.replace("/staff/login");
+        const reason = code === "RESTAURANT_UNAVAILABLE" ? "unavailable" : "ended";
+        window.location.replace(`/staff/login?session=${reason}`);
       }
       return Promise.reject(normalise(err, code));
     }
 
     // Only auto-refresh owner/customer access tokens, not staff tokens —
-    // staff sign in with a PIN and have no refresh cookie.
+    // a staff session is one 24h OTP sign-in with no refresh.
     if (
       err.response?.status === 401 &&
       RECOVERABLE_401.has(code) &&

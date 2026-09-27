@@ -4,18 +4,20 @@ import {
   AlertCircle,
   ArrowLeft,
   ChefHat,
+  Clock,
   Delete,
-  Eye,
-  EyeOff,
+  Info,
   Loader2,
   MapPin,
   Navigation,
+  Phone,
   Search,
   UtensilsCrossed,
   X,
 } from "lucide-react";
 
 import { homeRouteForRole, useStaffAuth } from "@/context/StaffAuthContext";
+import { formatPhone, isValidPhone, sanitizePhoneInput, toPhoneDigits } from "@/lib/phone";
 import {
   useGeolocation,
   useRestaurantSuggestions,
@@ -24,32 +26,33 @@ import {
 /* ─────────────────────────────────────────────────────────────────────────
    Staff login (/staff/login)
 
-   Two steps, because a staff code is only unique inside one restaurant
-   (server/models/StaffMember.js) — the restaurant has to be settled before the
-   credentials mean anything.
+   Three steps. The same phone number can be staff at more than one restaurant
+   (server/models/StaffMember.js), so the restaurant is settled first.
 
      1. Pick the restaurant  — typeahead over GET /api/staff/auth/restaurants,
                                 ranked by distance from the device when the
                                 browser will share a location.
-     2. Staff code + PIN     — exactly the credentials the owner issued in the
-                                restaurant portal (/staff). Nothing here is
-                                seeded, guessed or hard-coded.
+     2. Phone number         — the one the owner registered in the restaurant
+                                portal (/staff). POST /api/staff/auth/otp/send.
+     3. 6-digit code         — sent to that phone. POST /api/staff/auth/otp/verify
+                                opens a session that lasts exactly 24 hours.
    ───────────────────────────────────────────────────────────────────────── */
 
-// The shared tablet on the pass is the normal case, so the restaurant and the
-// last staff code are remembered to save retyping at the start of every shift.
-// The PIN is never stored — it is the only secret in the pair.
+// The shared tablet on the pass is the normal case, so the restaurant is
+// remembered to save searching at the start of every shift. The phone number is
+// NOT: on a shared device it would leave one colleague's number for the next.
 const LAST_KEY = "yulo_staff_last_login";
 
 function readLast() {
   try {
-    return JSON.parse(localStorage.getItem(LAST_KEY) ?? "null");
+    const last = JSON.parse(localStorage.getItem(LAST_KEY) ?? "null");
+    return last?.restaurant?._id ? last : null;
   } catch {
     return null;
   }
 }
 
-function rememberLast(restaurant, staffCode) {
+function rememberLast(restaurant) {
   try {
     localStorage.setItem(
       LAST_KEY,
@@ -60,7 +63,6 @@ function rememberLast(restaurant, staffCode) {
           logo: restaurant.logo ?? null,
           address: restaurant.address ?? {},
         },
-        staffCode,
       }),
     );
   } catch {
@@ -68,16 +70,10 @@ function rememberLast(restaurant, staffCode) {
   }
 }
 
-// Owner-issued codes are W## for waiters and C## for chefs
-// (server/controllers/owner/staff.controller.js). Echoing the role back as the
-// code is typed catches a chef reaching for the waiter tablet before they have
-// spent an attempt on the rate limiter.
-function roleFromCode(code) {
-  const first = code.trim().charAt(0).toUpperCase();
-  if (first === "W") return "waiter";
-  if (first === "C") return "chef";
-  return null;
-}
+const CODE_LENGTH = 6;
+// Matches the server's 3-codes-per-10-minutes budget: long enough that nobody burns
+// it in one impatient minute, short enough not to strand someone whose SMS is lost.
+const RESEND_SECONDS = 30;
 
 function formatDistance(km) {
   if (km == null) return null;
@@ -90,22 +86,36 @@ function addressLine(address) {
   return [address?.street, address?.city].filter(Boolean).join(", ") || null;
 }
 
-// The server's messages are already written for staff; these only cover the
-// cases where the raw wording would leave someone stuck on the screen.
+// The server's messages are already written for staff (e.g. INVALID_OTP says how
+// many tries are left); these only cover the cases where the raw wording would
+// leave someone stuck on the screen.
 function loginErrorMessage(err) {
   switch (err?.code) {
+    case "OTP_EXPIRED":
+      return "That code has expired or isn't valid for this number here. Request a new code — and check the number is the one your manager registered.";
+    case "OTP_LOCKED":
+      return "Too many wrong codes. Request a new code to try again.";
     case "INVALID_CREDENTIALS":
-      return "That staff code and PIN don't match. Check them with your manager.";
+      return "This number isn't registered as staff at this restaurant any more. Check with your manager.";
+    case "RESTAURANT_UNAVAILABLE":
+      return "This restaurant isn't active right now. Please contact your manager.";
     case "RATE_LIMITED":
-      return "Too many attempts. Wait a minute before trying again.";
+      return err?.message || "Too many attempts. Wait a few minutes before trying again.";
     case "VALIDATION_ERROR":
-      return "Enter your staff code and a 4–8 digit PIN.";
+      return err?.message || "Check the number and code and try again.";
     default:
       if (err?.status === undefined)
         return "Can't reach the server. Check the connection and try again.";
       return err?.message ?? "Login failed. Please try again.";
   }
 }
+
+// Why the last session ended, when the portal sent them here (api/client.js,
+// StaffAuthContext). Anything else is ignored.
+const SESSION_NOTICE = {
+  ended: "Your shift session has ended — staff sign in again every 24 hours. Sign in below to continue.",
+  unavailable: "This restaurant isn't active right now, so you've been signed out. Please contact your manager.",
+};
 
 /* ── Brand mark ───────────────────────────────────────────────────────── */
 
@@ -396,14 +406,14 @@ function RestaurantStep({ onSelect, remembered, onForgetRemembered }) {
             <RestaurantMark restaurant={remembered.restaurant} size={36} />
             <button
               type="button"
-              onClick={() => onSelect(remembered.restaurant, remembered.staffCode)}
+              onClick={() => onSelect(remembered.restaurant)}
               className="min-w-0 flex-1 text-left"
             >
               <span className="block truncate text-[14px] font-semibold text-white">
                 {remembered.restaurant.name}
               </span>
               <span className="block truncate text-[12px] text-[#8a6f5a]">
-                Continue as {remembered.staffCode}
+                Continue to sign in
               </span>
             </button>
             <button
@@ -421,13 +431,13 @@ function RestaurantStep({ onSelect, remembered, onForgetRemembered }) {
   );
 }
 
-/* ── PIN keypad (touch devices) ───────────────────────────────────────── */
+/* ── Number keypad (touch devices) ──────────────────────────────────── */
 
 const KEYPAD = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"];
 
 function Keypad({ onDigit, onBackspace, disabled }) {
   return (
-    <div className="grid grid-cols-3 gap-2" role="group" aria-label="PIN keypad">
+    <div className="grid grid-cols-3 gap-2" role="group" aria-label="Number keypad">
       {KEYPAD.map((key, i) =>
         key === "" ? (
           <span key={i} />
@@ -464,36 +474,69 @@ function useCoarsePointer() {
   return coarse;
 }
 
-/* ── Step 2 — credentials ─────────────────────────────────────────────── */
+/* ── Shared bits for steps 2 and 3 ────────────────────────────────────── */
 
-const PIN_MAX = 8;
+function SelectedRestaurant({ restaurant, onChange }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-[#3A2515] bg-[#1b1108] p-3">
+      <RestaurantMark restaurant={restaurant} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[14px] font-semibold text-white">{restaurant.name}</p>
+        {addressLine(restaurant.address) && (
+          <p className="truncate text-[12px] text-[#8a6f5a]">{addressLine(restaurant.address)}</p>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onChange}
+        className="shrink-0 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-[#F2A65A] transition hover:bg-white/5"
+      >
+        Change
+      </button>
+    </div>
+  );
+}
 
-function CredentialsStep({
-  restaurant,
-  staffCode,
-  setStaffCode,
-  pin,
-  setPin,
-  onBack,
-  onSubmit,
-  loading,
-  error,
-}) {
-  const [reveal, setReveal] = useState(false);
+function ErrorBox({ error }) {
+  if (!error) return null;
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2.5 rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-3"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+      <p className="text-[13px] leading-relaxed text-red-300">{error}</p>
+    </div>
+  );
+}
+
+function SubmitButton({ disabled, loading, idle, busy }) {
+  return (
+    <button
+      type="submit"
+      disabled={disabled}
+      className="flex w-full items-center justify-center gap-2 rounded-2xl py-[15px] text-[15px] font-bold text-white shadow-lg shadow-[#A4161A]/20 transition hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+      style={{ background: "linear-gradient(90deg, #A4161A 0%, #D9480F 100%)" }}
+    >
+      {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+      {loading ? busy : idle}
+    </button>
+  );
+}
+
+/* ── Step 2 — phone number ────────────────────────────────────────────── */
+
+// `phoneInput` is the field's text as typed; the number itself is read from it.
+function PhoneStep({ restaurant, phoneInput, setPhoneInput, onBack, onSubmit, loading, error }) {
   const coarse = useCoarsePointer();
-  const codeRef = useRef(null);
-  const pinRef = useRef(null);
-
+  const phoneRef = useRef(null);
   useEffect(() => {
-    // Land on whichever field is still empty — a remembered code means the
-    // returning waiter only has to enter the PIN.
-    (staffCode ? pinRef : codeRef).current?.focus();
-    // Only on mount: refocusing on every keystroke would fight the caret.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    phoneRef.current?.focus();
   }, []);
 
-  const role = roleFromCode(staffCode);
-  const canSubmit = staffCode.trim().length >= 2 && pin.length >= 4 && !loading;
+  const phone = toPhoneDigits(phoneInput);
+  const valid = isValidPhone(phone);
+  const canSubmit = valid && !loading;
 
   return (
     <form
@@ -503,119 +546,181 @@ function CredentialsStep({
         if (canSubmit) onSubmit();
       }}
     >
-      {/* Selected restaurant */}
-      <div className="flex items-center gap-3 rounded-2xl border border-[#3A2515] bg-[#1b1108] p-3">
-        <RestaurantMark restaurant={restaurant} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[14px] font-semibold text-white">{restaurant.name}</p>
-          {addressLine(restaurant.address) && (
-            <p className="truncate text-[12px] text-[#8a6f5a]">{addressLine(restaurant.address)}</p>
-          )}
+      <SelectedRestaurant restaurant={restaurant} onChange={onBack} />
+
+      <div>
+        <label
+          htmlFor="staff-phone"
+          className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8a6f5a]"
+        >
+          Your phone number
+        </label>
+        <div className="flex items-stretch overflow-hidden rounded-2xl border border-[#3A2515] bg-[#150E07] transition focus-within:border-[#D9480F] focus-within:ring-4 focus-within:ring-[#D9480F]/15">
+          <span className="flex items-center gap-1.5 border-r border-[#3A2515] px-3.5 text-[15px] font-semibold text-[#8a6f5a]">
+            <Phone className="h-4 w-4" /> +91
+          </span>
+          <input
+            id="staff-phone"
+            ref={phoneRef}
+            type="tel"
+            inputMode="numeric"
+            autoComplete="tel-national"
+            // Kept as typed: auto-formatting would fight the caret (backspace next to
+            // an inserted space looks like it did nothing), and cleaning each keystroke
+            // would mangle a typed "+91 …" before the prefix is complete.
+            value={phoneInput}
+            onChange={(e) => setPhoneInput(sanitizePhoneInput(e.target.value))}
+            placeholder="9876543210"
+            className="min-w-0 flex-1 bg-transparent px-4 py-[15px] text-[17px] tracking-[0.12em] text-white placeholder-[#4a3524] outline-none"
+          />
+        </div>
+        <p className="mt-1.5 text-[11px] text-[#6b503b]">
+          The number your manager registered for you. We&apos;ll text you a 6-digit code.
+        </p>
+        {phone.length === 10 && !valid && (
+          <p className="mt-1.5 text-[12px] text-red-300">Indian mobile numbers start with 6, 7, 8 or 9.</p>
+        )}
+        {phone.length > 10 && (
+          <p className="mt-1.5 text-[12px] text-red-300">That&apos;s too many digits — enter your 10-digit mobile number.</p>
+        )}
+
+        {coarse && (
+          <div className="mt-3">
+            <Keypad
+              disabled={loading}
+              onDigit={(d) => setPhoneInput((p) => sanitizePhoneInput(p + d))}
+              onBackspace={() => setPhoneInput((p) => p.slice(0, -1))}
+            />
+          </div>
+        )}
+      </div>
+
+      <ErrorBox error={error} />
+
+      <SubmitButton disabled={!canSubmit} loading={loading} idle="Send code" busy="Sending code…" />
+    </form>
+  );
+}
+
+/* ── Step 3 — one-time code ───────────────────────────────────────────── */
+
+function useCountdown(seconds, restartKey) {
+  const [left, setLeft] = useState(seconds);
+  useEffect(() => {
+    setLeft(seconds);
+    const timer = setInterval(() => setLeft((s) => (s <= 1 ? 0 : s - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [seconds, restartKey]);
+  return left;
+}
+
+function CodeStep({
+  phone,
+  code,
+  setCode,
+  sentAt,
+  notice,
+  onChangeNumber,
+  onResend,
+  onSubmit,
+  loading,
+  resending,
+  error,
+}) {
+  const coarse = useCoarsePointer();
+  const codeRef = useRef(null);
+  const resendIn = useCountdown(RESEND_SECONDS, sentAt);
+  useEffect(() => {
+    codeRef.current?.focus();
+  }, [sentAt]);
+
+  const canSubmit = code.length === CODE_LENGTH && !loading;
+
+  return (
+    <form
+      className="space-y-5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canSubmit) onSubmit();
+      }}
+    >
+      <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#3A2515] bg-[#1b1108] px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6b503b]">Code sent to</p>
+          <p className="truncate text-[15px] font-semibold tracking-[0.06em] text-white">
+            +91 {formatPhone(phone)}
+          </p>
         </div>
         <button
           type="button"
-          onClick={onBack}
+          onClick={onChangeNumber}
           className="shrink-0 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-[#F2A65A] transition hover:bg-white/5"
         >
           Change
         </button>
       </div>
 
-      {/* Staff code */}
+      {notice && (
+        <div className="flex items-start gap-2.5 rounded-2xl border border-[#F2A65A]/25 bg-[#F2A65A]/10 px-4 py-3">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#F2A65A]" />
+          <p className="text-[12.5px] leading-relaxed text-[#F5C89A]">{notice}</p>
+        </div>
+      )}
+
       <div>
         <label
           htmlFor="staff-code"
-          className="mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8a6f5a]"
+          className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8a6f5a]"
         >
-          Staff code
-          {role && (
-            <span className="flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-[#F2A65A]">
-              {role === "chef" ? (
-                <ChefHat className="h-3 w-3" />
-              ) : (
-                <UtensilsCrossed className="h-3 w-3" />
-              )}
-              {role === "chef" ? "Chef" : "Waiter"}
-            </span>
-          )}
+          6-digit code
         </label>
         <input
           id="staff-code"
           ref={codeRef}
-          value={staffCode}
-          onChange={(e) => setStaffCode(e.target.value.replace(/\s+/g, "").toUpperCase().slice(0, 10))}
-          placeholder="W01"
-          autoComplete="off"
-          autoCapitalize="characters"
-          spellCheck={false}
-          className="w-full rounded-2xl border border-[#3A2515] bg-[#150E07] px-4 py-[15px] font-mono text-[16px] tracking-[0.2em] text-white placeholder-[#4a3524] outline-none transition focus:border-[#D9480F] focus:ring-4 focus:ring-[#D9480F]/15"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH))}
+          placeholder="••••••"
+          className="w-full rounded-2xl border border-[#3A2515] bg-[#150E07] px-4 py-[15px] text-center text-[22px] tracking-[0.6em] text-white placeholder-[#4a3524] outline-none transition focus:border-[#D9480F] focus:ring-4 focus:ring-[#D9480F]/15"
         />
-        <p className="mt-1.5 text-[11px] text-[#6b503b]">
-          Issued by your manager in the restaurant portal.
-        </p>
-      </div>
-
-      {/* PIN */}
-      <div>
-        <label
-          htmlFor="staff-pin"
-          className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8a6f5a]"
-        >
-          PIN
-        </label>
-        <div className="relative">
-          <input
-            id="staff-pin"
-            ref={pinRef}
-            type={reveal ? "text" : "password"}
-            inputMode="numeric"
-            autoComplete="off"
-            value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, PIN_MAX))}
-            placeholder="••••"
-            className="w-full rounded-2xl border border-[#3A2515] bg-[#150E07] px-4 py-[15px] pr-12 text-center text-[20px] tracking-[0.55em] text-white placeholder-[#4a3524] outline-none transition focus:border-[#D9480F] focus:ring-4 focus:ring-[#D9480F]/15"
-          />
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-label={reveal ? "Hide PIN" : "Show PIN"}
-            onClick={() => setReveal((v) => !v)}
-            className="absolute right-3.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full text-[#6b503b] transition hover:bg-white/5 hover:text-[#8a6f5a]"
-          >
-            {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </button>
+        <div className="mt-2 flex items-center justify-between text-[12px]">
+          <span className="flex items-center gap-1 text-[#6b503b]">
+            <Clock className="h-3 w-3" /> Valid for 5 minutes
+          </span>
+          {resendIn > 0 ? (
+            <span className="text-[#6b503b]">Resend in {resendIn}s</span>
+          ) : (
+            <button
+              type="button"
+              onClick={onResend}
+              disabled={resending || loading}
+              className="font-semibold text-[#F2A65A] underline-offset-2 hover:underline disabled:opacity-50"
+            >
+              {resending ? "Sending…" : "Resend code"}
+            </button>
+          )}
         </div>
 
         {coarse && (
           <div className="mt-3">
             <Keypad
               disabled={loading}
-              onDigit={(d) => setPin((p) => (p.length >= PIN_MAX ? p : p + d))}
-              onBackspace={() => setPin((p) => p.slice(0, -1))}
+              onDigit={(d) => setCode((c) => (c.length >= CODE_LENGTH ? c : c + d))}
+              onBackspace={() => setCode((c) => c.slice(0, -1))}
             />
           </div>
         )}
       </div>
 
-      {error && (
-        <div
-          role="alert"
-          className="flex items-start gap-2.5 rounded-2xl border border-red-900/60 bg-red-950/40 px-4 py-3"
-        >
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
-          <p className="text-[13px] leading-relaxed text-red-300">{error}</p>
-        </div>
-      )}
+      <ErrorBox error={error} />
 
-      <button
-        type="submit"
+      <SubmitButton
         disabled={!canSubmit}
-        className="flex w-full items-center justify-center gap-2 rounded-2xl py-[15px] text-[15px] font-bold text-white shadow-lg shadow-[#A4161A]/20 transition hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-        style={{ background: "linear-gradient(90deg, #A4161A 0%, #D9480F 100%)" }}
-      >
-        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-        {loading ? "Starting your shift…" : "Start shift"}
-      </button>
+        loading={loading}
+        idle="Verify & start shift"
+        busy="Starting your shift…"
+      />
     </form>
   );
 }
@@ -640,14 +745,27 @@ const HIGHLIGHTS = [
 export default function StaffLoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, staff, ready } = useStaffAuth();
+  const { requestCode, verifyCode, staff, ready, sessionEnded } = useStaffAuth();
 
   const [remembered, setRemembered] = useState(readLast);
   const [restaurant, setRestaurant] = useState(null);
-  const [staffCode, setStaffCode] = useState("");
-  const [pin, setPin] = useState("");
+  const [phoneInput, setPhoneInput] = useState("");
+  // The 10-digit number the field holds — what is sent and shown back.
+  const phone = toPhoneDigits(phoneInput);
+  const [code, setCode] = useState("");
+  // Set once a code has been requested for `phone` — this is what moves the screen
+  // to step 3, and it changes on every resend to restart the resend countdown.
+  const [sentAt, setSentAt] = useState(null);
+  const [codeNotice, setCodeNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+
+  // Why the previous session ended, if the portal sent them here (?session=…).
+  // Also when the previous shift simply ran out while the portal was closed.
+  const sessionNotice =
+    SESSION_NOTICE[new URLSearchParams(location.search).get("session")] ??
+    (sessionEnded ? SESSION_NOTICE.ended : "");
 
   // Where to land after a successful sign in: back to the screen that bounced
   // them here, as long as it belongs to their role.
@@ -655,7 +773,7 @@ export default function StaffLoginPage() {
 
   // Already signed in (a bookmarked /staff/login, or a second tab) — the form
   // would only be a dead end. The ref keeps this off the path of a sign-in that
-  // just happened here: handleSubmit may be sending them somewhere more specific
+  // just happened here: handleVerify may be sending them somewhere more specific
   // than the role home, and this must not overwrite that choice.
   const signedInHere = useRef(false);
   useEffect(() => {
@@ -663,32 +781,92 @@ export default function StaffLoginPage() {
     if (ready && staff) navigate(homeRouteForRole(staff.role), { replace: true });
   }, [ready, staff, navigate]);
 
-  function selectRestaurant(next, presetCode) {
+  // Bumped whenever the number or restaurant is abandoned, so a code request still in
+  // flight from before can't land afterwards and jump the screen to "Check your phone"
+  // for a number the waiter has already changed.
+  const sendSeq = useRef(0);
+
+  function selectRestaurant(next) {
+    sendSeq.current += 1;
     setRestaurant(next);
-    setStaffCode(presetCode ?? "");
-    setPin("");
+    setPhoneInput("");
+    setCode("");
+    setSentAt(null);
+    setCodeNotice("");
     setError("");
   }
 
-  async function handleSubmit() {
+  function changeNumber() {
+    sendSeq.current += 1;
+    setCode("");
+    setSentAt(null);
+    setCodeNotice("");
+    setError("");
+  }
+
+  // Shared by "Send code" and "Resend code".
+  // Resolves false when the request was abandoned meanwhile (see sendSeq).
+  async function sendCode() {
+    const seq = ++sendSeq.current;
+    const result = await requestCode({ restaurantId: restaurant._id, phone });
+    if (seq !== sendSeq.current) return false;
+    setCode("");
+    setSentAt(Date.now());
+    setCodeNotice(
+      result.otpBypass
+        ? "Test mode: text messages are switched off, so no SMS will arrive. Enter any 6 digits."
+        : import.meta.env.DEV && result.devOtp
+          ? `Development build — your code is ${result.devOtp}.`
+          : "",
+    );
+    return true;
+  }
+
+  async function handleSend() {
+    setError("");
+    setLoading(true);
+    const seq = sendSeq.current + 1;
+    try {
+      await sendCode();
+    } catch (err) {
+      if (seq === sendSeq.current) setError(loginErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResend() {
+    setError("");
+    setResending(true);
+    const seq = sendSeq.current + 1;
+    try {
+      await sendCode();
+    } catch (err) {
+      if (seq === sendSeq.current) setError(loginErrorMessage(err));
+    } finally {
+      setResending(false);
+    }
+  }
+
+  async function handleVerify() {
     setError("");
     setLoading(true);
     try {
       signedInHere.current = true;
-      const profile = await login({ restaurantId: restaurant._id, staffCode, pin });
-      rememberLast(restaurant, profile.staffCode);
+      const profile = await verifyCode({ restaurantId: restaurant._id, phone, code });
+      rememberLast(restaurant);
       const home = homeRouteForRole(profile.role);
       const target = from && from.startsWith(home) ? from : home;
       navigate(target, { replace: true });
     } catch (err) {
       signedInHere.current = false;
       setError(loginErrorMessage(err));
-      setPin("");
+      setCode("");
       setLoading(false);
     }
   }
 
-  const step = restaurant ? 2 : 1;
+  const step = !restaurant ? 1 : sentAt ? 3 : 2;
 
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-[#140D06] font-sans">
@@ -719,8 +897,8 @@ export default function StaffLoginPage() {
               <span className="text-[#F2A65A]">your shift?</span>
             </h2>
             <p className="mt-5 max-w-sm text-[14px] leading-relaxed text-white/40">
-              Sign in with the staff code and PIN your restaurant issued you. Your workspace
-              opens straight to the floor you work.
+              Sign in with your phone number and a one-time code. Your workspace opens
+              straight to the floor you work, for the day.
             </p>
 
             <div className="mt-9 space-y-3">
@@ -754,39 +932,49 @@ export default function StaffLoginPage() {
 
             <div className="mb-6">
               <div className="mb-3 flex items-center gap-2.5">
-                {step === 2 && (
+                {step > 1 && (
                   <button
                     type="button"
-                    onClick={() => selectRestaurant(null)}
-                    aria-label="Back to restaurant search"
+                    onClick={() => (step === 3 ? changeNumber() : selectRestaurant(null))}
+                    aria-label={step === 3 ? "Back to phone number" : "Back to restaurant search"}
                     className="grid h-8 w-8 place-items-center rounded-full border border-[#3A2515] text-[#8a6f5a] transition hover:bg-white/5 hover:text-white"
                   >
                     <ArrowLeft className="h-4 w-4" />
                   </button>
                 )}
                 <div className="flex items-center gap-1.5" aria-hidden>
-                  <span
-                    className={`h-1 rounded-full transition-all ${
-                      step === 1 ? "w-6 bg-[#F2A65A]" : "w-3 bg-[#3A2515]"
-                    }`}
-                  />
-                  <span
-                    className={`h-1 rounded-full transition-all ${
-                      step === 2 ? "w-6 bg-[#F2A65A]" : "w-3 bg-[#3A2515]"
-                    }`}
-                  />
+                  {[1, 2, 3].map((n) => (
+                    <span
+                      key={n}
+                      className={`h-1 rounded-full transition-all ${
+                        step === n ? "w-6 bg-[#F2A65A]" : "w-3 bg-[#3A2515]"
+                      }`}
+                    />
+                  ))}
                 </div>
               </div>
 
               <h1 className="text-[26px] font-bold leading-tight text-white">
-                {step === 1 ? "Staff login" : "Welcome back"}
+                {step === 1 ? "Staff login" : step === 2 ? "Welcome back" : "Check your phone"}
               </h1>
               <p className="mt-1.5 text-[13.5px] text-[#8a6f5a]">
                 {step === 1
                   ? "Find your restaurant to get started."
-                  : "Enter the staff code and PIN your manager gave you."}
+                  : step === 2
+                    ? "Sign in with your phone number — no PIN needed."
+                    : "Enter the 6-digit code we just sent you."}
               </p>
             </div>
+
+            {sessionNotice && step === 1 && (
+              <div
+                role="status"
+                className="mb-4 flex items-start gap-2.5 rounded-2xl border border-[#F2A65A]/25 bg-[#F2A65A]/10 px-4 py-3"
+              >
+                <Clock className="mt-0.5 h-4 w-4 shrink-0 text-[#F2A65A]" />
+                <p className="text-[13px] leading-relaxed text-[#F5C89A]">{sessionNotice}</p>
+              </div>
+            )}
 
             <div className="rounded-3xl border border-[#3A2515] bg-[#20150B]/90 p-6 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-7">
               {step === 1 ? (
@@ -798,16 +986,28 @@ export default function StaffLoginPage() {
                     setRemembered(null);
                   }}
                 />
-              ) : (
-                <CredentialsStep
+              ) : step === 2 ? (
+                <PhoneStep
                   restaurant={restaurant}
-                  staffCode={staffCode}
-                  setStaffCode={setStaffCode}
-                  pin={pin}
-                  setPin={setPin}
+                  phoneInput={phoneInput}
+                  setPhoneInput={setPhoneInput}
                   onBack={() => selectRestaurant(null)}
-                  onSubmit={handleSubmit}
+                  onSubmit={handleSend}
                   loading={loading}
+                  error={error}
+                />
+              ) : (
+                <CodeStep
+                  phone={phone}
+                  code={code}
+                  setCode={setCode}
+                  sentAt={sentAt}
+                  notice={codeNotice}
+                  onChangeNumber={changeNumber}
+                  onResend={handleResend}
+                  onSubmit={handleVerify}
+                  loading={loading}
+                  resending={resending}
                   error={error}
                 />
               )}
