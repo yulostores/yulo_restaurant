@@ -83,7 +83,9 @@ export function approvalBadge(approvalStatus) {
 
 // Screens an owner can always reach — they are how an unapproved owner submits
 // or corrects the application, plus their own account page.
-export const ALWAYS_ALLOWED_PATHS = ["/store-settings", "/profile"];
+// /payments/settings too: the bank account can be added while the application is under
+// review (the API allows it at any approvalStatus), so the first payout isn't held for it.
+export const ALWAYS_ALLOWED_PATHS = ["/store-settings", "/profile", "/payments/settings"];
 
 export function isAlwaysAllowed(pathname) {
   return ALWAYS_ALLOWED_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));

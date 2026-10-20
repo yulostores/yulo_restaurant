@@ -28,7 +28,9 @@ export function useOwnerOrdersPage(restaurantId, params = {}) {
     queryKey: [...orderKeys.list(restaurantId, params), "page"],
     queryFn: () => ownerApi.listOrders(restaurantId, params).then((r) => r.data.data),
     enabled: !!restaurantId,
-    staleTime: 30_000,
+    staleTime: 15_000,
+    // Picks up a rider's pickup OTP soon after they accept (the restaurant reads it to them).
+    refetchInterval: 20_000,
   });
 }
 

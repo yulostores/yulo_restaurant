@@ -6,6 +6,7 @@ import { useStaffAuth } from "@/context/StaffAuthContext";
 import { useKitchenQueue, useKitchenBoard, useUpdateOrderStatus } from "@/hooks/staff/useKitchen";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import OrderDetailsDialog from "@/components/OrderDetailsDialog";
+import RiderPickupOtp from "@/components/RiderPickupOtp";
 import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
@@ -172,6 +173,9 @@ function BoardCard({ order, column, onAction, onViewDetails }) {
           </p>
         ))}
       </div>
+
+      {/* The rider is on the way or at the pass — staff read this code to them at handover. */}
+      {!cancelled && <RiderPickupOtp order={order.raw} className="mb-4" />}
 
       {column === "preparing" && !cancelled && (
         <div className="space-y-2">

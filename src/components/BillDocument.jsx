@@ -233,7 +233,10 @@ export function BillCharges({ bill, className }) {
     <div className={cn("space-y-1.5 text-sm", className)}>
       {lines.map((line) => (
         <div key={line.key} className="flex justify-between gap-3">
-          <span className="text-muted-foreground">{line.label}</span>
+          <span className="text-muted-foreground">
+            {line.label}
+            {line.sublabel ? <span className="block text-[11px]">{line.sublabel}</span> : null}
+          </span>
           <span className={cn("font-medium", line.tone === "credit" && "text-brand-green")}>
             {line.tone === "credit"
               ? `−${formatMoney(Math.abs(line.value))}`

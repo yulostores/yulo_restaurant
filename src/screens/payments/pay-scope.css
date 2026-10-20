@@ -1,0 +1,104 @@
+/*
+ * The Payments & Payouts design system (Figma "Yulo — Settlement panels", owner frames 144:*),
+ * applied ONLY inside `.pay-scope` — the payment screens' root element and their modals. The
+ * rest of the portal keeps its own look (styles.css), so nothing here may reach outside the scope
+ * except the canvas colour of a page that contains one.
+ *
+ * Tokens: accent #14594a / tint #e0efea / label #0e4237 · canvas #f5f3ee · border #e3dfd4 ·
+ * sunken #efece4 · text #1a1d1b / #596059 / #6f766f · Geist (body, headings), Plus Jakarta Sans
+ * (figures, buttons, badges), IBM Plex Mono (ids).
+ */
+
+.pay-scope {
+  --pay-accent: #14594a;
+  --pay-accent-tint: #e0efea;
+  --pay-accent-label: #0e4237;
+  --pay-canvas: #f5f3ee;
+  --pay-border: #e3dfd4;
+  --pay-sunken: #efece4;
+  --pay-text: #1a1d1b;
+  --pay-text-2: #596059;
+  --pay-text-3: #6f766f;
+  font-family: "Geist", "Manrope", sans-serif;
+  color: var(--pay-text);
+}
+
+/* The page canvas behind a payment screen (the layout's own background and sticky header bar). */
+.min-h-screen:has(.pay-scope),
+.min-h-screen:has(.pay-scope) .sticky {
+  background-color: #f5f3ee;
+}
+
+/* Headings: Geist semibold, never the portal's serif, never squeezed to 12ch. */
+.pay-scope h1,
+.pay-scope h2,
+.pay-scope h3 {
+  font-family: "Geist", sans-serif;
+  max-width: none;
+  letter-spacing: normal;
+  color: var(--pay-text);
+}
+.pay-scope h1 {
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+.pay-scope h2 {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+}
+.pay-scope h3 {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.pay-scope .text-muted-foreground {
+  color: var(--pay-text-2);
+}
+.pay-scope .font-mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+.pay-scope .pay-figure {
+  font-family: "Plus Jakarta Sans", sans-serif;
+}
+
+/* Tables: sentence-case 12px header on the sunken colour, centred 14px cells, first column left. */
+.pay-scope table thead tr {
+  background-color: var(--pay-sunken);
+  border-color: var(--pay-border);
+}
+.pay-scope table th {
+  height: auto;
+  padding: 12px 14px;
+  white-space: nowrap;
+  font-family: "Geist", sans-serif;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--pay-text-2);
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: center;
+}
+.pay-scope table td {
+  padding: 14px 14px;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+}
+.pay-scope table tbody tr {
+  border-color: var(--pay-border);
+}
+.pay-scope table th:first-child,
+.pay-scope table td:first-child {
+  text-align: left;
+  padding-left: 20px;
+}
+.pay-scope table th:last-child,
+.pay-scope table td:last-child {
+  padding-right: 20px;
+}

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ownerApi } from "@/api/owner.api";
 
 export const billKeys = {
@@ -25,6 +25,32 @@ export function useBill(restaurantId, billId) {
     enabled: !!restaurantId && !!billId,
     staleTime: 30_000,
   });
+}
+
+// Counter settlement and payment release both hand back the updated bill; the list and any
+// order → bill lookups are refreshed behind it.
+function useBillMutation(restaurantId, call) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: call,
+    onSuccess: (res, { billId }) => {
+      const bill = res?.data?.data?.bill;
+      if (bill) qc.setQueryData(billKeys.one(restaurantId, billId), bill);
+      qc.invalidateQueries({ queryKey: ["bills", restaurantId] });
+    },
+  });
+}
+
+export function useMarkBillPaid(restaurantId) {
+  return useBillMutation(restaurantId, ({ billId, method }) =>
+    ownerApi.markBillPaid(restaurantId, billId, method),
+  );
+}
+
+export function useReleaseBillPayment(restaurantId) {
+  return useBillMutation(restaurantId, ({ billId }) =>
+    ownerApi.releaseBillPayment(restaurantId, billId),
+  );
 }
 
 // The bill a given order landed on. `null` (not an error) while the sitting is unbilled,

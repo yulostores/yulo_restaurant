@@ -80,12 +80,26 @@ export function useMarkPaid(restaurantId) {
   const qc = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ sessionId, paymentMethod }) =>
-      staffApi.markPaid(restaurantId, sessionId, paymentMethod),
+    mutationFn: ({ sessionId, method }) => staffApi.markPaid(restaurantId, sessionId, method),
     onSuccess: (_data, { sessionId }) => {
       qc.invalidateQueries({ queryKey: waiterKeys.allSessions(restaurantId) });
       qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
       qc.invalidateQueries({ queryKey: waiterKeys.bill(restaurantId, sessionId) });
+    },
+  });
+}
+
+// ── Release a bill held for a guest's abandoned online payment ───────
+export function useReleasePayment(restaurantId) {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ sessionId }) => staffApi.releasePayment(restaurantId, sessionId),
+    onSuccess: (res, { sessionId }) => {
+      const bill = res?.data?.data?.bill;
+      if (bill) qc.setQueryData(waiterKeys.bill(restaurantId, sessionId), bill);
+      qc.invalidateQueries({ queryKey: waiterKeys.allSessions(restaurantId) });
+      qc.invalidateQueries({ queryKey: waiterKeys.tables(restaurantId) });
     },
   });
 }

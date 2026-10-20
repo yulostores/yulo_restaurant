@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   X,
   BellRing,
+  Wallet,
 } from "lucide-react";
 
 import RestaurantLogo from "@/components/RestaurantLogo";
@@ -70,6 +71,7 @@ const NAV_SECTIONS = [
   {
     title: "Account",
     items: [
+      { to: "/payments", label: "Payments & Payouts", icon: Wallet },
       { to: "/staff", label: "Staff Management", icon: Users },
       { to: "/store-settings", label: "Store Settings", icon: Store },
       { to: "/profile", label: "Profile", icon: UserRound },
@@ -79,6 +81,8 @@ const NAV_SECTIONS = [
 
 function isActive(pathname, to) {
   if (to === "/dashboard") return pathname === "/" || pathname === "/dashboard";
+  // Every Payments screen (overview, statements, order details, bank settings).
+  if (to === "/payments") return pathname === "/payments" || pathname.startsWith("/payments/");
   return pathname === to;
 }
 

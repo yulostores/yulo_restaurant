@@ -30,6 +30,7 @@ import { QrCode, ReceiptText, UtensilsCrossed } from "lucide-react";
 import { useStaffAuth } from "@/context/StaffAuthContext";
 import {
   useMarkPaid,
+  useReleasePayment,
   useScanTable,
   useSessionBill,
   useUpdateOrderStatus,
@@ -42,6 +43,7 @@ import BillDocument from "@/components/BillDocument";
 import QRScannerModal from "@/components/QRScannerModal";
 import { parseTableQr } from "@/lib/tableQr";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useToast } from "@/components/Toaster";
 import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import WaiterLayout, { formatPrice } from "./WaiterLayout";
@@ -57,7 +59,25 @@ import {
   serveAction,
 } from "./orderStatus";
 
-const PAYMENT_METHODS = ["cash", "upi", "card", "online"];
+// Counter methods only. An online payment is the guest's own, from the QR menu — the floor
+// never marks one (the server refuses "online" here).
+const PAYMENT_METHODS = [
+  { value: "cash", label: "Cash" },
+  { value: "upi", label: "UPI" },
+  { value: "card", label: "Card" },
+];
+
+// Server codes the floor needs in its own words: what's happening and what to do.
+function settleErrorMessage(err) {
+  if (err?.code === "PAID_ONLINE") {
+    return "The guest is paying this bill online — it will show as paid in a moment. Don't take payment at the counter.";
+  }
+  if (err?.code === "PAYMENT_IN_PROGRESS") {
+    return "The guest's online payment is going through — wait for it to show as paid.";
+  }
+  if (err?.code === "BILL_ALREADY_PAID") return "This bill has already been paid.";
+  return errorMessage(err);
+}
 
 // Keyed by the floor's reading of a ticket, not the kitchen's raw status — see
 // ./orderStatus.js for why 'confirmed' never surfaces here.
@@ -103,8 +123,17 @@ function BillPanel({ restaurantId, session, onClose }) {
   const sessionId = session._id;
   const { data: bill, isLoading, error: billError } = useSessionBill(restaurantId, sessionId);
   const { mutateAsync: markPaid, isPending } = useMarkPaid(restaurantId);
+  const release = useReleasePayment(restaurantId);
+  const toast = useToast();
   const [method, setMethod] = useState("cash");
   const [error, setError] = useState("");
+  const [confirmRelease, setConfirmRelease] = useState(false);
+  // A guest started paying this bill from the QR menu: the bill is held at that total and
+  // the table locked against new rounds until the payment settles, they back out, someone
+  // releases it, or the hold lapses (30 min with nothing paid). Taking payment at the
+  // counter still works on an abandoned hold — the server refuses it (409 PAID_ONLINE) only
+  // while a real payment is going through.
+  const guestPaying = session.status === "bill_requested";
 
   // The server refuses to raise or settle a bill while a round is still with the kitchen
   // (409 ORDERS_PENDING). The card's button is already inert in that case, so this only
@@ -114,10 +143,27 @@ function BillPanel({ restaurantId, session, onClose }) {
   async function settle() {
     setError("");
     try {
-      await markPaid({ sessionId, paymentMethod: method });
+      await markPaid({ sessionId, method });
+      toast.success(`Bill settled by ${PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method}`);
       onClose();
     } catch (err) {
-      setError(errorMessage(err));
+      const message = settleErrorMessage(err);
+      setError(message);
+      toast.error(message);
+    }
+  }
+
+  async function releasePayment() {
+    setError("");
+    try {
+      await release.mutateAsync({ sessionId });
+      setConfirmRelease(false);
+      toast.success("Payment released — the table can order again or pay at the counter");
+    } catch (err) {
+      const message = settleErrorMessage(err);
+      setConfirmRelease(false);
+      setError(message);
+      toast.error(message);
     }
   }
 
@@ -145,20 +191,56 @@ function BillPanel({ restaurantId, session, onClose }) {
             footer={
               bill.payment?.isPaid ? null : (
                 <div className="space-y-3">
+                  {guestPaying ? (
+                    <div className="rounded-xl bg-[#FFF4E5] px-3 py-2.5 text-xs text-[#8A4B00]">
+                      <p className="font-semibold">The guest started paying online from the QR menu.</p>
+                      <p className="mt-0.5">
+                        If they&apos;d rather pay here, take payment below. To let the table order again,
+                        release the payment.
+                      </p>
+                      {confirmRelease ? (
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={releasePayment}
+                            disabled={release.isPending}
+                            className="rounded-lg bg-[#8A4B00] px-3 py-1.5 font-bold text-white disabled:opacity-60"
+                          >
+                            {release.isPending ? "Releasing…" : "Yes, release it"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmRelease(false)}
+                            className="rounded-lg border border-[#8A4B00]/40 px-3 py-1.5 font-bold"
+                          >
+                            Keep waiting
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmRelease(true)}
+                          className="mt-2 rounded-lg border border-[#8A4B00]/40 bg-white px-3 py-1.5 font-bold"
+                        >
+                          Release payment
+                        </button>
+                      )}
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap gap-1.5">
                     {PAYMENT_METHODS.map((m) => (
                       <button
-                        key={m}
+                        key={m.value}
                         type="button"
-                        onClick={() => setMethod(m)}
+                        onClick={() => setMethod(m.value)}
                         className={cn(
                           "rounded-full px-3.5 py-1.5 text-xs font-bold uppercase transition",
-                          method === m
+                          method === m.value
                             ? "bg-brand-gradient text-white"
                             : "border border-brand-cream bg-white text-[#5a403e]",
                         )}
                       >
-                        {m}
+                        {m.label}
                       </button>
                     ))}
                   </div>
@@ -168,7 +250,7 @@ function BillPanel({ restaurantId, session, onClose }) {
                     disabled={isPending}
                     className="w-full rounded-xl bg-brand-gradient py-3 text-sm font-bold text-white disabled:opacity-60"
                   >
-                    {isPending ? "Closing…" : "Mark as paid"}
+                    {isPending ? "Closing…" : "Mark as paid at the counter"}
                   </button>
                 </div>
               )

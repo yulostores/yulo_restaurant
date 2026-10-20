@@ -17,9 +17,9 @@
 // not drive them.
 
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  ChevronDown, ChevronUp, LayoutList, Receipt, Search, UtensilsCrossed, Users,
+  ChevronDown, ChevronUp, LayoutList, Receipt, Search, UtensilsCrossed, Users, Wallet,
 } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
@@ -37,6 +37,7 @@ import {
   Table, TableBody, TableCell,
   TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import RiderPickupOtp from "@/components/RiderPickupOtp";
 import { cn } from "@/lib/utils";
 
 // The order lifecycle exactly as the API documents it, plus the waiter-owned 'served'.
@@ -283,6 +284,7 @@ function OrderRow({ order, onView, onViewBill }) {
       <TableCell className="text-muted-foreground">{formatDateTime(order.createdAt)}</TableCell>
       <TableCell>
         <Badge variant={statusVariant(order.status)}>{statusLabel(order.status)}</Badge>
+        <RiderPickupOtp order={order} compact className="mt-1.5" />
       </TableCell>
       <TableCell className="text-right font-semibold">{formatPrice(order.subtotal)}</TableCell>
       <TableCell className="text-right">
@@ -298,6 +300,17 @@ function OrderRow({ order, onView, onViewBill }) {
           >
             <Receipt className="h-4 w-4" />
           </button>
+          {/* A dine-in round's money is on its table's bill (Bills → Payment details). */}
+          {order.type !== "dine_in" ? (
+            <Link
+              to={`/payments/orders/${order._id}`}
+              className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-brand-cream/30"
+              aria-label="Payment details"
+              title="Payment details"
+            >
+              <Wallet className="h-4 w-4" />
+            </Link>
+          ) : null}
         </div>
       </TableCell>
     </TableRow>

@@ -84,12 +84,22 @@ export function fieldError(field, rawValue) {
   return null;
 }
 
+// A field's rules as they apply to these values: the descriptor, plus its `requiredWhen`
+// rules when that condition holds (the GST number once "GST registered" is on). Mirrors
+// effectiveField on the server.
+export function effectiveField(field, values) {
+  const condition = field?.requiredWhen;
+  if (!condition || getByPath(values, condition.path) !== condition.equals) return field;
+  return { ...field, required: true, ...condition.rules };
+}
+
 // Every rule in the spec, against a values object shaped the way the API expects it —
 // i.e. the very payload the save is about to send, so what's validated is what's sent.
 // Keyed by field path, which is also how the server reports its own field errors.
 export function validateFields(fields, values) {
   const errors = {};
-  for (const field of fields) {
+  for (const baseField of fields) {
+    const field = effectiveField(baseField, values);
     const message = fieldError(field, getByPath(values, field.path));
     if (message) errors[field.path] = message;
   }

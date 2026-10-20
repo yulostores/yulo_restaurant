@@ -12,6 +12,7 @@
 // doesn't have.
 
 import { X } from "lucide-react";
+import RiderPickupOtp from "@/components/RiderPickupOtp";
 
 import { Badge } from "@/components/ui/badge";
 
@@ -228,6 +229,7 @@ export default function OrderDetailsDialog({ order, onClose, action }) {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <RiderPickupOtp order={order} className="mb-4" />
           {order.status === "placed" ? (
             <p className="mb-4 rounded-xl bg-[#FCE9E4] px-3.5 py-2.5 text-sm text-brand-maroon">
               Waiting for the restaurant to accept this order — accept or reject it from

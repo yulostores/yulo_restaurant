@@ -29,7 +29,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ImagePlus, ImageUp, Lock, MapPin, MapPinOff, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ChevronDown, ChevronRight, ImagePlus, ImageUp, Landmark, Lock, MapPin, MapPinOff, X } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import {
@@ -58,6 +59,7 @@ import { useObjectUrl } from "@/lib/useObjectUrl";
 import {
   applyInputRules,
   brandImageError,
+  fieldError,
   indexFields,
   inputId,
   setByPath,
@@ -446,6 +448,8 @@ function seedForm({ restaurant, hours, delivery, spec, hoursConfig }) {
         return [key, value == null ? "" : String(value)];
       }),
     ),
+    // Whether food GST is charged on this restaurant's orders — the "tax" section's toggle.
+    gstRegistered: restaurant.gstRegistered === true,
     settings: Object.fromEntries(
       compliance.map((f) => {
         const key = leaf(f.path);
@@ -532,6 +536,21 @@ export default function StoreSettings() {
   const errors = useMemo(() => {
     if (!form || !requirements) return {};
     const found = validateFields(spec.all, form);
+    // The GST number's stricter rules (required, a real GSTIN) apply once the restaurant is
+    // GST-registered — but, as on the server, only to a save that changes the toggle or the
+    // number. A registered restaurant holding an older-format number can still fix its phone
+    // without being made to re-enter its GSTIN first.
+    const gstPath = "settings.gstNumber";
+    const saved = original ? JSON.parse(original) : null;
+    const gstTouched =
+      !saved ||
+      saved.gstRegistered !== form.gstRegistered ||
+      (saved.settings?.gstNumber ?? "") !== (form.settings?.gstNumber ?? "");
+    if (!gstTouched) {
+      const baseError = fieldError(spec.get(gstPath), form.settings?.gstNumber);
+      if (baseError) found[gstPath] = baseError;
+      else delete found[gstPath];
+    }
     // An open day with a blank time would otherwise post 00:00, silently marking the
     // restaurant open from midnight. Hours are a table, not a field, so this one rule
     // can't be expressed as a per-field descriptor.
@@ -539,7 +558,7 @@ export default function StoreSettings() {
       found.hours = requirements.hours.incompleteMessage;
     }
     return found;
-  }, [form, requirements, spec]);
+  }, [form, original, requirements, spec]);
 
   const hasErrors = Object.keys(errors).length > 0;
 
@@ -594,6 +613,9 @@ export default function StoreSettings() {
     }
     setStatus(null);
 
+    const gstNumberChanged =
+      (JSON.parse(original).settings?.gstNumber ?? "") !== (form.settings?.gstNumber ?? "");
+
     // Each PATCH is its own record; name the step so a partial failure says which one
     // rather than leaving the owner guessing what did and didn't persist.
     let step = "profile";
@@ -614,7 +636,17 @@ export default function StoreSettings() {
           phone: form.phone.trim(),
           website: form.website.trim(),
           establishedYear: form.establishedYear,
-          settings: form.settings,
+          // The GST number rides along only when it changed: the server applies the GSTIN
+          // rules to any save that carries it, and an unchanged older-format number must not
+          // block an unrelated edit (the settings merge keeps the stored one).
+          settings: gstNumberChanged
+            ? form.settings
+            : Object.fromEntries(Object.entries(form.settings).filter(([key]) => key !== "gstNumber")),
+          // Only when it changed: setting it records the owner's decision (and stamps it so the
+          // GST backfill never overrides it), which an unrelated save shouldn't do.
+          ...(form.gstRegistered !== JSON.parse(original).gstRegistered
+            ? { gstRegistered: form.gstRegistered }
+            : {}),
           ...(logoFile ? { logo: logoFile } : {}),
           ...(bannerFile ? { banner: bannerFile } : {}),
         }),
@@ -853,10 +885,16 @@ export default function StoreSettings() {
   // A card of descriptors — Business Details, Licenses & Tax, Delivery Logistics — laid
   // out from the contract rather than from a hand-written list that has to be kept in
   // step with it.
+  // A locked section still lets the GST number be filled in when it was never saved and the
+  // restaurant has just said it is GST-registered — otherwise the toggle could never be
+  // turned on for a store whose other licence details are already on file.
+  const fieldLocked = (field, locked) =>
+    locked &&
+    !(field.path === "settings.gstNumber" && form.gstRegistered && !savedSettings.gstNumber);
   const renderSection = (name, { locked = false } = {}) =>
     spec.section(name).map((field) => (
       <div key={field.path} className={cn(field.wide && "sm:col-span-2")}>
-        {locked ? (
+        {fieldLocked(field, locked) ? (
           <LockedField label={field.label} value={form.settings[leaf(field.path)]} />
         ) : (
           <Field
@@ -1070,6 +1108,35 @@ export default function StoreSettings() {
               {licensesLocked && <LockBadge />}
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {spec.section("tax").map((field) => (
+                <div
+                  key={field.path}
+                  className="flex items-start justify-between gap-4 rounded-lg border border-brand-cream/80 bg-brand-page px-4 py-3 sm:col-span-2"
+                >
+                  <div>
+                    <Label htmlFor={inputId(field.path)} className="text-sm font-semibold">
+                      {field.label}
+                    </Label>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">{field.help}</p>
+                    <p
+                      className={cn(
+                        "mt-1.5 text-xs font-medium",
+                        form.gstRegistered ? "text-brand-green" : "text-muted-foreground",
+                      )}
+                    >
+                      {form.gstRegistered
+                        ? "Food GST is charged on your orders."
+                        : "No food GST is charged on your orders."}
+                    </p>
+                  </div>
+                  <Switch
+                    id={inputId(field.path)}
+                    checked={!!form.gstRegistered}
+                    onCheckedChange={(on) => setField(field.path, on)}
+                    aria-label={field.label}
+                  />
+                </div>
+              ))}
               {renderSection("licenses", { locked: licensesLocked })}
               {!licensesLocked && (
                 <p className="text-[11px] text-muted-foreground sm:col-span-2">
@@ -1080,6 +1147,23 @@ export default function StoreSettings() {
             </CardContent>
           </Card>
         </div>
+
+        {/* The payout bank account has its own page — it isn't part of this form's save. */}
+        <Link
+          to="/payments/settings"
+          className="mt-5 flex items-center gap-3 rounded-xl border border-brand-cream bg-white px-5 py-4 transition-colors hover:bg-brand-page"
+        >
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-orange/10 text-brand-orange">
+            <Landmark className="h-5 w-5" />
+          </span>
+          <span className="flex-1">
+            <span className="block text-sm font-bold">Bank &amp; payout settings</span>
+            <span className="block text-xs text-muted-foreground">
+              The account your weekly payouts are sent to, and your payout schedule.
+            </span>
+          </span>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </Link>
 
         {/* The scans behind the numbers above — uploaded individually, reviewed individually. */}
         <ComplianceDocuments restaurantId={restaurantId} className="mt-5" />

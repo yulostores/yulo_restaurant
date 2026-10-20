@@ -64,6 +64,53 @@ export function placedByLabel(batch) {
  * consistently rather than each deciding for itself.
  */
 export function chargeLines(bill) {
+  if (bill?.chargeBreakdown?.lines?.length) return breakdownLines(bill);
+  return legacyChargeLines(bill);
+}
+
+/**
+ * The pricing engine's own lines (server: services/charges.service.js), which carry what the
+ * rupee summary can't — the platform fee with its GST, and the round-off. Amounts are the
+ * server's paise, only converted to rupees here. Two receipt conventions are kept: per-code
+ * discount lines, and a dine-in bill's GST stated as its CGST/SGST halves (both figures the
+ * server's own, from `charges`).
+ */
+function breakdownLines(bill) {
+  const c = bill.charges ?? {};
+  const lines = [];
+  for (const line of bill.chargeBreakdown.lines) {
+    if (line.key === "grand_total") continue;
+    if (line.key === "discount" && (bill.discountsApplied ?? []).some((d) => d.amount)) {
+      for (const [i, d] of bill.discountsApplied.entries()) {
+        if (!d.amount) continue;
+        lines.push({
+          key: `discount-${d.discountId ?? i}`,
+          label: d.code ? `Discount (${d.code})` : d.description || "Discount",
+          value: -d.amount,
+          tone: "credit",
+        });
+      }
+      continue;
+    }
+    if (line.key === "food_gst" && bill.type === "dine_in" && c.cgstAmount) {
+      lines.push({ key: "cgst", label: `CGST (${c.cgstPercent}%)`, value: c.cgstAmount });
+      lines.push({ key: "sgst", label: `SGST (${c.sgstPercent}%)`, value: c.sgstAmount });
+      continue;
+    }
+    if (!line.amountPaise && line.key !== "item_total") continue;
+    lines.push({
+      key: line.key,
+      label: line.label,
+      sublabel: line.sublabel ?? null,
+      value: line.amountPaise / 100,
+      tone: line.amountPaise < 0 && line.key === "discount" ? "credit" : undefined,
+    });
+  }
+  return lines;
+}
+
+// Bills from before the pricing engine have only the rupee summary.
+function legacyChargeLines(bill) {
   const c = bill?.charges ?? {};
   const lines = [{ key: "subtotal", label: "Item total", value: c.subtotal ?? 0 }];
 

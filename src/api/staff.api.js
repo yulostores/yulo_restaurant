@@ -87,13 +87,21 @@ export const staffApi = {
   getBill: (restaurantId, sessionId) =>
     client.get(`/staff/${restaurantId}/waiter/sessions/${sessionId}/bill`, S),
 
-  // paymentMethod: "cash" | "upi" | "card" | "online"
-  markPaid: (restaurantId, sessionId, paymentMethod = "cash") =>
+  // Settles the bill at the counter. method: "cash" | "upi" | "card" — an online payment
+  // is the guest's own (QR menu) and is never marked by the floor. 409 PAID_ONLINE while the
+  // guest's online payment is going through, 409 BILL_ALREADY_PAID, 409 ORDERS_PENDING.
+  markPaid: (restaurantId, sessionId, method = "cash") =>
     client.post(
       `/staff/${restaurantId}/waiter/sessions/${sessionId}/bill/mark-paid`,
-      { paymentMethod },
+      { method },
       S,
     ),
+
+  // Releases a bill held for a guest's online payment they abandoned (closed the payment
+  // sheet, walked to the counter) — re-opens the table and re-prices the bill. 409
+  // PAYMENT_IN_PROGRESS while that payment is actually going through.
+  releasePayment: (restaurantId, sessionId) =>
+    client.post(`/staff/${restaurantId}/waiter/sessions/${sessionId}/bill/release-payment`, {}, S),
 
   // ── Customer Requests (role: waiter) ──────────────────────────────
   // status: "pending" | "acknowledged" | "resolved"; omit to get all.

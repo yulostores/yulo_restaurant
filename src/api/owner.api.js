@@ -5,14 +5,25 @@ import client from "./client";
 // 403 NOT_OWNER. Staff / category / menu-item routes additionally return
 // 403 RESTAURANT_NOT_APPROVED until an admin approves the restaurant.
 
+// A PDF response as { blob, filename } — the server's Content-Disposition name when present.
+const pdfFile = (r) => {
+  const header = r.headers?.["content-disposition"] ?? "";
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+  return {
+    blob: r.data,
+    filename: match ? decodeURIComponent(match[1]) : null,
+  };
+};
+
 export const ownerApi = {
   // ── Restaurants ───────────────────────────────────────────────────
-  listRestaurants:  ()     => client.get("/owner/restaurants"),
+  listRestaurants: () => client.get("/owner/restaurants"),
   createRestaurant: (body) => client.post("/owner/restaurants", body),
 
   // ── Restaurant profile (allowed at any approvalStatus) ────────────
-  getRestaurantDetail: (rId)       => client.get(`/owner/${rId}/restaurant`),
-  updateRestaurant:    (rId, body) => client.patch(`/owner/${rId}/restaurant`, body),
+  getRestaurantDetail: (rId) => client.get(`/owner/${rId}/restaurant`),
+  updateRestaurant: (rId, body) =>
+    client.patch(`/owner/${rId}/restaurant`, body),
 
   // ── Settings ─────────────────────────────────────────────────────
   // The store-settings field contract — labels, which details are mandatory, the pattern
@@ -28,11 +39,13 @@ export const ownerApi = {
   updateSettings: (rId, formData) =>
     client.patch(`/owner/${rId}/settings`, formData),
 
-  getHours:    (rId)       => client.get(`/owner/${rId}/settings/hours`),
-  updateHours: (rId, body) => client.patch(`/owner/${rId}/settings/hours`, body),
+  getHours: (rId) => client.get(`/owner/${rId}/settings/hours`),
+  updateHours: (rId, body) =>
+    client.patch(`/owner/${rId}/settings/hours`, body),
 
-  getDelivery:    (rId)       => client.get(`/owner/${rId}/settings/delivery`),
-  updateDelivery: (rId, body) => client.patch(`/owner/${rId}/settings/delivery`, body),
+  getDelivery: (rId) => client.get(`/owner/${rId}/settings/delivery`),
+  updateDelivery: (rId, body) =>
+    client.patch(`/owner/${rId}/settings/delivery`, body),
 
   // ── Compliance documents (allowed at any approvalStatus) ─────────
   // The scans behind the licence numbers above. Admin reviews each one and marks it
@@ -46,7 +59,8 @@ export const ownerApi = {
     fd.append("document", file);
     return client.post(`/owner/${rId}/documents`, fd);
   },
-  deleteDocument: (rId, docId) => client.delete(`/owner/${rId}/documents/${docId}`),
+  deleteDocument: (rId, docId) =>
+    client.delete(`/owner/${rId}/documents/${docId}`),
   // The document's bytes, streamed through the API with their real content type. The
   // stored Cloudinary URL is deliberately not linkable — see the server's
   // services/restaurantDocument.service.js.
@@ -54,6 +68,89 @@ export const ownerApi = {
     client
       .get(`/owner/${rId}/documents/${docId}/file`, { responseType: "blob" })
       .then((r) => r.data),
+
+  // ── Bank account (allowed at any approvalStatus) ──────────────────
+  // Where settlements are paid. Never returns the full number — last four digits only.
+  // Body: { accountHolderName, accountNumber, confirmAccountNumber, ifsc, bankName?,
+  // branch?, accountType: "savings" | "current" }. Once the account is verified, a save is a
+  // change REQUEST (account.pendingChange) and payouts keep going to the verified account
+  // until Yulo verifies the new one. 503 ENCRYPTION_NOT_CONFIGURED if the server can't store it.
+  getPayoutAccount: (rId) => client.get(`/owner/${rId}/payout-account`),
+  savePayoutAccount: (rId, body) =>
+    client.put(`/owner/${rId}/payout-account`, body),
+
+  // ── Payments (approved restaurants) ───────────────────────────────
+  // The masked account plus the next scheduled payout, as an admin scheduled it — the
+  // portal never guesses a payout day.
+  getPaymentSettings: (rId) => client.get(`/owner/${rId}/payments/settings`),
+  // The Payments & Payouts screens (API.md → Owner — Payments & Payouts). Money in PAISE;
+  // every status label and owner-facing sentence comes from the server.
+  getPaymentsOverview: (rId, params) =>
+    client.get(`/owner/${rId}/payments/overview`, { params }),
+  getPayoutHistory: (rId, params) =>
+    client.get(`/owner/${rId}/payments/history`, { params }),
+  getPaymentStatement: (rId, statementId) =>
+    client.get(`/owner/${rId}/payments/statements/${statementId}`),
+  getOrderPayment: (rId, orderId) =>
+    client.get(`/owner/${rId}/payments/orders/${orderId}`),
+  getBillPayment: (rId, billId) =>
+    client.get(`/owner/${rId}/payments/bills/${billId}`),
+
+  // ── Payment issues (approved restaurants) ─────────────────────────
+  // A ticket about a payout (settlementId), an order (orderId) or a bill (billId). Create and
+  // reply take one optional `attachment` (PDF / JPG / PNG, 5 MB) — multipart then, JSON
+  // otherwise. Attachments come back through the API, never as a storage URL.
+  listPaymentIssues: (rId, params) =>
+    client.get(`/owner/${rId}/payment-issues`, { params }),
+  getPaymentIssue: (rId, ticketId) =>
+    client.get(`/owner/${rId}/payment-issues/${ticketId}`),
+  createPaymentIssue: (rId, fields, file) => {
+    if (!file) return client.post(`/owner/${rId}/payment-issues`, fields);
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(fields))
+      if (v != null && v !== "") fd.append(k, v);
+    fd.append("attachment", file);
+    return client.post(`/owner/${rId}/payment-issues`, fd);
+  },
+  addPaymentIssueMessage: (rId, ticketId, text, file) => {
+    if (!file)
+      return client.post(`/owner/${rId}/payment-issues/${ticketId}/messages`, {
+        text,
+      });
+    const fd = new FormData();
+    fd.append("text", text);
+    fd.append("attachment", file);
+    return client.post(`/owner/${rId}/payment-issues/${ticketId}/messages`, fd);
+  },
+  getPaymentIssueAttachment: (rId, ticketId, attachmentId) =>
+    client
+      .get(
+        `/owner/${rId}/payment-issues/${ticketId}/attachments/${attachmentId}`,
+        { responseType: "blob" },
+      )
+      .then((r) => r.data),
+  // The statement's per-order CSV (the settlement export).
+  exportStatementCsv: (rId, statementId) =>
+    client
+      .get(`/owner/${rId}/settlements/${statementId}/export`, {
+        responseType: "blob",
+      })
+      .then((r) => r.data),
+  // PDFs: the weekly statement, and one order's / dine-in bill's payment statement. Resolve to
+  // { blob, filename } — the name from the server's Content-Disposition when it sends one.
+  downloadStatementPdf: (rId, statementId) =>
+    client
+      .get(`/owner/${rId}/settlements/${statementId}/pdf`, {
+        responseType: "blob",
+      })
+      .then(pdfFile),
+  downloadPaymentPdf: (rId, kind, id) =>
+    client
+      .get(
+        `/owner/${rId}/payments/${kind === "bill" ? "bills" : "orders"}/${id}/pdf`,
+        { responseType: "blob" },
+      )
+      .then(pdfFile),
 
   // ── Dashboard ────────────────────────────────────────────────────
   // period: "today" | "week" | "month" | "year"
@@ -71,8 +168,9 @@ export const ownerApi = {
   // (assigned to the sitting) and `statusHistory` — see the server's
   // services/orderView.service.js.
   // params: { status, type: "dine_in"|"delivery", tableId, page, limit }
-  listOrders: (rId, params = {}) => client.get(`/owner/${rId}/orders`, { params }),
-  getOrder:   (rId, orderId)     => client.get(`/owner/${rId}/orders/${orderId}`),
+  listOrders: (rId, params = {}) =>
+    client.get(`/owner/${rId}/orders`, { params }),
+  getOrder: (rId, orderId) => client.get(`/owner/${rId}/orders/${orderId}`),
 
   // ── Order approval ───────────────────────────────────────────────
   // A customer order (delivery app, table QR) arrives as status "placed" and waits here:
@@ -84,7 +182,8 @@ export const ownerApi = {
   // carries `awaitingPayment` (online, unpaid — accepting it answers 409 PAYMENT_PENDING).
   listPendingOrders: (rId) => client.get(`/owner/${rId}/orders/pending`),
   // 409 ORDER_ALREADY_DECIDED if it was accepted/rejected/cancelled/expired meanwhile.
-  acceptOrder: (rId, orderId) => client.patch(`/owner/${rId}/orders/${orderId}/accept`),
+  acceptOrder: (rId, orderId) =>
+    client.patch(`/owner/${rId}/orders/${orderId}/accept`),
   // reason: 3–200 chars, shown to the customer. The bare word "Other" is refused (400).
   rejectOrder: (rId, orderId, reason) =>
     client.patch(`/owner/${rId}/orders/${orderId}/reject`, { reason }),
@@ -96,82 +195,118 @@ export const ownerApi = {
 
   // ── Bills ────────────────────────────────────────────────────────
   // params: { status: "open"|"paid", type, tableNumber, from, to, q, page, limit }
-  listBills: (rId, params = {}) => client.get(`/owner/${rId}/bills`, { params }),
-  getBill:   (rId, billId)      => client.get(`/owner/${rId}/bills/${billId}`),
+  listBills: (rId, params = {}) =>
+    client.get(`/owner/${rId}/bills`, { params }),
+  getBill: (rId, billId) => client.get(`/owner/${rId}/bills/${billId}`),
+  // Settle a dine-in bill paid at the counter. method: "cash" | "upi" | "card".
+  // 409 PAID_ONLINE (the guest is paying online), BILL_ALREADY_PAID, ORDERS_PENDING.
+  markBillPaid: (rId, billId, method) =>
+    client.post(`/owner/${rId}/bills/${billId}/mark-paid`, { method }),
+  // Release a bill held for a guest's abandoned online payment. 409 PAYMENT_IN_PROGRESS
+  // while that payment is going through.
+  releaseBillPayment: (rId, billId) =>
+    client.post(`/owner/${rId}/bills/${billId}/release-payment`, {}),
   // The bill an order ended up on — a dine-in order resolves to its table session's bill,
   // a delivery/takeaway order to its own. Answers 200 with `bill: null` when the sitting
   // has not been billed yet.
-  getBillForOrder: (rId, orderId) => client.get(`/owner/${rId}/orders/${orderId}/bill`),
+  getBillForOrder: (rId, orderId) =>
+    client.get(`/owner/${rId}/orders/${orderId}/bill`),
 
   // ── Menu Items ───────────────────────────────────────────────────
   // create/update take multipart/form-data (optional `image` file, max 5 MB).
-  listMenuItems:     (rId)                   => client.get(`/owner/${rId}/menu-items`),
-  getMenuItem:       (rId, itemId)           => client.get(`/owner/${rId}/menu-items/${itemId}`),
-  createMenuItem:    (rId, formData)         => client.post(`/owner/${rId}/menu-items`, formData),
-  updateMenuItem:    (rId, itemId, formData) => client.patch(`/owner/${rId}/menu-items/${itemId}`, formData),
-  deleteMenuItem:    (rId, itemId)           => client.delete(`/owner/${rId}/menu-items/${itemId}`),
-  toggleMenuItem:    (rId, itemId)           => client.patch(`/owner/${rId}/menu-items/${itemId}/toggle`),
+  listMenuItems: (rId) => client.get(`/owner/${rId}/menu-items`),
+  getMenuItem: (rId, itemId) =>
+    client.get(`/owner/${rId}/menu-items/${itemId}`),
+  createMenuItem: (rId, formData) =>
+    client.post(`/owner/${rId}/menu-items`, formData),
+  updateMenuItem: (rId, itemId, formData) =>
+    client.patch(`/owner/${rId}/menu-items/${itemId}`, formData),
+  deleteMenuItem: (rId, itemId) =>
+    client.delete(`/owner/${rId}/menu-items/${itemId}`),
+  toggleMenuItem: (rId, itemId) =>
+    client.patch(`/owner/${rId}/menu-items/${itemId}/toggle`),
   updateIngredients: (rId, itemId, ingredients) =>
-    client.patch(`/owner/${rId}/menu-items/${itemId}/ingredients`, { ingredients }),
+    client.patch(`/owner/${rId}/menu-items/${itemId}/ingredients`, {
+      ingredients,
+    }),
 
   // ── Staff ────────────────────────────────────────────────────────
   // role: "waiter" | "chef". `pin` is 4–8 digits and is only ever sent, never
   // returned (`pinHash` is stripped server-side). DELETE is a soft delete that
   // just sets isActive:false.
-  listStaff:   (rId)                => client.get(`/owner/${rId}/staff`),
-  createStaff: (rId, body)          => client.post(`/owner/${rId}/staff`, body),
-  updateStaff: (rId, staffId, body) => client.patch(`/owner/${rId}/staff/${staffId}`, body),
-  removeStaff: (rId, staffId)       => client.delete(`/owner/${rId}/staff/${staffId}`),
+  listStaff: (rId) => client.get(`/owner/${rId}/staff`),
+  createStaff: (rId, body) => client.post(`/owner/${rId}/staff`, body),
+  updateStaff: (rId, staffId, body) =>
+    client.patch(`/owner/${rId}/staff/${staffId}`, body),
+  removeStaff: (rId, staffId) =>
+    client.delete(`/owner/${rId}/staff/${staffId}`),
 
   // ── Categories & Subcategories ───────────────────────────────────
-  listCategories:  (rId)            => client.get(`/owner/${rId}/categories`),
-  createCategory:  (rId, body)      => client.post(`/owner/${rId}/categories`, body),
-  updateCategory:  (rId, cId, body) => client.patch(`/owner/${rId}/categories/${cId}`, body),
-  deleteCategory:  (rId, cId)       => client.delete(`/owner/${rId}/categories/${cId}`),
+  listCategories: (rId) => client.get(`/owner/${rId}/categories`),
+  createCategory: (rId, body) => client.post(`/owner/${rId}/categories`, body),
+  updateCategory: (rId, cId, body) =>
+    client.patch(`/owner/${rId}/categories/${cId}`, body),
+  deleteCategory: (rId, cId) =>
+    client.delete(`/owner/${rId}/categories/${cId}`),
 
-  listSubCategories:  (rId, cId)            => client.get(`/owner/${rId}/categories/${cId}/subcategories`),
-  createSubCategory:  (rId, cId, body)      => client.post(`/owner/${rId}/categories/${cId}/subcategories`, body),
-  updateSubCategory:  (rId, cId, sId, body) => client.patch(`/owner/${rId}/categories/${cId}/subcategories/${sId}`, body),
-  deleteSubCategory:  (rId, cId, sId)       => client.delete(`/owner/${rId}/categories/${cId}/subcategories/${sId}`),
+  listSubCategories: (rId, cId) =>
+    client.get(`/owner/${rId}/categories/${cId}/subcategories`),
+  createSubCategory: (rId, cId, body) =>
+    client.post(`/owner/${rId}/categories/${cId}/subcategories`, body),
+  updateSubCategory: (rId, cId, sId, body) =>
+    client.patch(`/owner/${rId}/categories/${cId}/subcategories/${sId}`, body),
+  deleteSubCategory: (rId, cId, sId) =>
+    client.delete(`/owner/${rId}/categories/${cId}/subcategories/${sId}`),
 
   // ── Tables + QR ──────────────────────────────────────────────────
-  listTables:  (rId)                 => client.get(`/owner/${rId}/tables`),
-  createTable: (rId, body)           => client.post(`/owner/${rId}/tables`, body),
-  updateTable: (rId, tableId, body)  => client.patch(`/owner/${rId}/tables/${tableId}`, body),
-  deleteTable: (rId, tableId)        => client.delete(`/owner/${rId}/tables/${tableId}`),
-  generateQR:  (rId, tableId)        => client.post(`/owner/${rId}/tables/${tableId}/qr`),
-  voidQR:      (rId, tableId)        => client.patch(`/owner/${rId}/tables/${tableId}/qr/void`),
+  listTables: (rId) => client.get(`/owner/${rId}/tables`),
+  createTable: (rId, body) => client.post(`/owner/${rId}/tables`, body),
+  updateTable: (rId, tableId, body) =>
+    client.patch(`/owner/${rId}/tables/${tableId}`, body),
+  deleteTable: (rId, tableId) =>
+    client.delete(`/owner/${rId}/tables/${tableId}`),
+  generateQR: (rId, tableId) =>
+    client.post(`/owner/${rId}/tables/${tableId}/qr`),
+  voidQR: (rId, tableId) =>
+    client.patch(`/owner/${rId}/tables/${tableId}/qr/void`),
 
   // ── Discounts ────────────────────────────────────────────────────
   // Created as `draft`; must be published to become `active`.
   // type: "percentage" | "flat_amount" | "free_item" | "tablewise"
   // create/update take a plain object, or a FormData when the offer image rides along
   // (axios sets the multipart boundary itself — never set Content-Type by hand).
-  listDiscounts:   (rId)            => client.get(`/owner/${rId}/discounts`),
-  createDiscount:  (rId, body)      => client.post(`/owner/${rId}/discounts`, body),
-  updateDiscount:  (rId, dId, body) => client.patch(`/owner/${rId}/discounts/${dId}`, body),
-  deleteDiscount:  (rId, dId)       => client.delete(`/owner/${rId}/discounts/${dId}`),
-  publishDiscount: (rId, dId)       => client.patch(`/owner/${rId}/discounts/${dId}/publish`),
-  draftDiscount:   (rId, dId)       => client.patch(`/owner/${rId}/discounts/${dId}/draft`),
+  listDiscounts: (rId) => client.get(`/owner/${rId}/discounts`),
+  createDiscount: (rId, body) => client.post(`/owner/${rId}/discounts`, body),
+  updateDiscount: (rId, dId, body) =>
+    client.patch(`/owner/${rId}/discounts/${dId}`, body),
+  deleteDiscount: (rId, dId) => client.delete(`/owner/${rId}/discounts/${dId}`),
+  publishDiscount: (rId, dId) =>
+    client.patch(`/owner/${rId}/discounts/${dId}/publish`),
+  draftDiscount: (rId, dId) =>
+    client.patch(`/owner/${rId}/discounts/${dId}/draft`),
 
   // ── Loyalty Program ──────────────────────────────────────────────
-  getLoyalty:    (rId)       => client.get(`/owner/${rId}/loyalty`),
+  getLoyalty: (rId) => client.get(`/owner/${rId}/loyalty`),
   updateLoyalty: (rId, body) => client.patch(`/owner/${rId}/loyalty`, body),
 
-  listMilestones:  (rId)            => client.get(`/owner/${rId}/loyalty/milestones`),
-  createMilestone: (rId, body)      => client.post(`/owner/${rId}/loyalty/milestones`, body),
-  updateMilestone: (rId, mId, body) => client.patch(`/owner/${rId}/loyalty/milestones/${mId}`, body),
-  deleteMilestone: (rId, mId)       => client.delete(`/owner/${rId}/loyalty/milestones/${mId}`),
+  listMilestones: (rId) => client.get(`/owner/${rId}/loyalty/milestones`),
+  createMilestone: (rId, body) =>
+    client.post(`/owner/${rId}/loyalty/milestones`, body),
+  updateMilestone: (rId, mId, body) =>
+    client.patch(`/owner/${rId}/loyalty/milestones/${mId}`, body),
+  deleteMilestone: (rId, mId) =>
+    client.delete(`/owner/${rId}/loyalty/milestones/${mId}`),
 
   // ── Live Monitor ─────────────────────────────────────────────────
-  getLiveStats:      (rId)       => client.get(`/owner/${rId}/live-monitor`),
-  getLiveVisitors:   (rId)       => client.get(`/owner/${rId}/live-monitor/visitors`),
-  getLiveRepeat:     (rId)       => client.get(`/owner/${rId}/live-monitor/repeat`),
-  createTargetOffer: (rId, body) => client.post(`/owner/${rId}/live-monitor/offer`, body),
+  getLiveStats: (rId) => client.get(`/owner/${rId}/live-monitor`),
+  getLiveVisitors: (rId) => client.get(`/owner/${rId}/live-monitor/visitors`),
+  getLiveRepeat: (rId) => client.get(`/owner/${rId}/live-monitor/repeat`),
+  createTargetOffer: (rId, body) =>
+    client.post(`/owner/${rId}/live-monitor/offer`, body),
 
   // ── Customer Requests (manager view — runs on the owner session) ──
   // status: "pending" | "acknowledged" | "resolved"; omit to get all.
-  listRequests:        (rId, status) =>
+  listRequests: (rId, status) =>
     client.get(`/owner/${rId}/requests`, { params: status ? { status } : {} }),
   updateRequestStatus: (rId, requestId, status) =>
     client.patch(`/owner/${rId}/requests/${requestId}`, { status }),

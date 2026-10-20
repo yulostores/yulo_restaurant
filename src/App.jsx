@@ -15,6 +15,11 @@ import MenuItems from "./screens/MenuItems";
 import StoreSettings from "./screens/StoreSettings";
 import BillDetails from "./screens/BillDetails";
 import Profile from "./screens/Profile";
+import BankPayoutSettings from "./screens/payments/BankPayoutSettings";
+import Payments from "./screens/payments/Payments";
+import StatementDetail from "./screens/payments/StatementDetail";
+import PaymentDetail from "./screens/payments/PaymentDetail";
+import { PaymentIssueDetail, PaymentIssuesList } from "./screens/payments/PaymentIssues";
 import StaffManagement from "./screens/StaffManagement";
 import ChefDashboard from "./screens/ChefDashboard";
 import ManagerDashboard from "./screens/manager/ManagerDashboard";
@@ -39,7 +44,7 @@ export default function App() {
 
       {/* ── Owner portal (protected) ───────────────────────────────────
           OwnerRoute checks the session; ApprovalGate then locks everything
-          except /store-settings and /profile until an admin sets the
+          except /store-settings, /profile and /payments/settings until an admin sets the
           restaurant's approvalStatus to "active" (see lib/approval.js). */}
       <Route path="/" element={<OwnerRoute><ApprovalGate><OwnerDashboard /></ApprovalGate></OwnerRoute>} />
       <Route path="/dashboard" element={<OwnerRoute><ApprovalGate><OwnerDashboard /></ApprovalGate></OwnerRoute>} />
@@ -55,6 +60,15 @@ export default function App() {
       <Route path="/store-settings" element={<OwnerRoute><ApprovalGate><StoreSettings /></ApprovalGate></OwnerRoute>} />
       <Route path="/staff" element={<OwnerRoute><ApprovalGate><StaffManagement /></ApprovalGate></OwnerRoute>} />
       <Route path="/profile" element={<OwnerRoute><ApprovalGate><Profile /></ApprovalGate></OwnerRoute>} />
+      {/* Open before approval too (lib/approval.js) — the bank account can be added while the application is reviewed. */}
+      <Route path="/payments/settings" element={<OwnerRoute><ApprovalGate><BankPayoutSettings /></ApprovalGate></OwnerRoute>} />
+      {/* Payments & Payouts — approved restaurants (the payments API answers 403 before approval). */}
+      <Route path="/payments" element={<OwnerRoute><ApprovalGate><Payments /></ApprovalGate></OwnerRoute>} />
+      <Route path="/payments/statements/:statementId" element={<OwnerRoute><ApprovalGate><StatementDetail /></ApprovalGate></OwnerRoute>} />
+      <Route path="/payments/orders/:orderId" element={<OwnerRoute><ApprovalGate><PaymentDetail kind="order" /></ApprovalGate></OwnerRoute>} />
+      <Route path="/payments/bills/:billId" element={<OwnerRoute><ApprovalGate><PaymentDetail kind="bill" /></ApprovalGate></OwnerRoute>} />
+      <Route path="/payments/issues" element={<OwnerRoute><ApprovalGate><PaymentIssuesList /></ApprovalGate></OwnerRoute>} />
+      <Route path="/payments/issues/:ticketId" element={<OwnerRoute><ApprovalGate><PaymentIssueDetail /></ApprovalGate></OwnerRoute>} />
 
       {/* ── Customer QR ordering app (public — OTP guards internally) ── */}
       <Route path="/order/*" element={<CustomerApp />} />

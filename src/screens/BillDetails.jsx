@@ -10,11 +10,18 @@
 // the bill for a given order.
 
 import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Printer, Receipt, Search } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft, Printer, Receipt, Search, Wallet } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
-import { useBill, useBillForOrder, useBills } from "@/hooks/owner/useBills";
+import {
+  useBill,
+  useBillForOrder,
+  useBills,
+  useMarkBillPaid,
+  useReleaseBillPayment,
+} from "@/hooks/owner/useBills";
+import { useToast } from "@/components/Toaster";
 import BillDocument from "@/components/BillDocument";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
@@ -26,10 +33,129 @@ import {
   TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { formatDateTime, formatMoney, humanize } from "@/lib/bill";
+import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
+// ── Settling a dine-in bill at the counter ───────────────────────────
+// Counter methods only — an online payment is the guest's own (QR menu), never marked here.
+const COUNTER_METHODS = [
+  { value: "cash", label: "Cash" },
+  { value: "upi", label: "UPI" },
+  { value: "card", label: "Card" },
+];
+
+function counterErrorMessage(err) {
+  if (err?.code === "PAID_ONLINE") {
+    return "The guest is paying this bill online — it will show as paid in a moment. Don't take payment at the counter.";
+  }
+  if (err?.code === "PAYMENT_IN_PROGRESS") {
+    return "The guest's online payment is going through — wait for it to show as paid.";
+  }
+  if (err?.code === "BILL_ALREADY_PAID") return "This bill has already been paid.";
+  return errorMessage(err);
+}
+
+function CounterSettle({ restaurantId, bill }) {
+  const toast = useToast();
+  const markPaid = useMarkBillPaid(restaurantId);
+  const release = useReleaseBillPayment(restaurantId);
+  const [method, setMethod] = useState("cash");
+  const [confirmRelease, setConfirmRelease] = useState(false);
+  const [error, setError] = useState("");
+  // A guest started paying this bill online at some point (the Razorpay order is on it). If
+  // they abandoned it the bill may still be held at that total with the table locked.
+  const onlineStarted = Boolean(bill.payment?.intentId);
+
+  async function settle() {
+    setError("");
+    try {
+      await markPaid.mutateAsync({ billId: bill._id, method });
+      toast.success(`Bill settled by ${COUNTER_METHODS.find((m) => m.value === method)?.label}`);
+    } catch (err) {
+      const message = counterErrorMessage(err);
+      setError(message);
+      toast.error(message);
+    }
+  }
+
+  async function releasePayment() {
+    setError("");
+    try {
+      await release.mutateAsync({ billId: bill._id });
+      toast.success("Payment released — the table can order again or pay at the counter");
+    } catch (err) {
+      const message = counterErrorMessage(err);
+      setError(message);
+      toast.error(message);
+    } finally {
+      setConfirmRelease(false);
+    }
+  }
+
+  return (
+    <Card className="print:hidden">
+      <CardHeader className="pb-2">
+        <h2 className="text-base font-bold">Settle at the counter</h2>
+        <p className="text-xs text-muted-foreground">
+          For a guest paying cash, UPI or card at the counter. Guests paying online do it from the
+          table QR — it settles on its own.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {error ? (
+          <p className="rounded-lg bg-[#FCE9E4] px-3 py-2 text-sm text-brand-maroon">{error}</p>
+        ) : null}
+        <div className="flex flex-wrap gap-1.5">
+          {COUNTER_METHODS.map((m) => (
+            <button
+              key={m.value}
+              type="button"
+              onClick={() => setMethod(m.value)}
+              className={cn(
+                "rounded-full px-3.5 py-1.5 text-xs font-bold uppercase transition",
+                method === m.value
+                  ? "bg-brand-gradient text-white"
+                  : "border border-brand-cream bg-white text-[#5a403e]",
+              )}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+        <Button onClick={settle} disabled={markPaid.isPending} className="w-full sm:w-auto">
+          {markPaid.isPending ? "Settling…" : `Mark ${formatMoney(bill.charges?.grandTotal)} as paid`}
+        </Button>
+
+        {onlineStarted ? (
+          <div className="rounded-xl bg-[#FFF4E5] px-3 py-2.5 text-xs text-[#8A4B00]">
+            <p className="font-semibold">A guest started paying this bill online.</p>
+            <p className="mt-0.5">
+              If they abandoned it, release the payment so the table can order again. It&apos;s
+              refused while their payment is actually going through.
+            </p>
+            {confirmRelease ? (
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" onClick={releasePayment} disabled={release.isPending}>
+                  {release.isPending ? "Releasing…" : "Yes, release it"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setConfirmRelease(false)}>
+                  Keep waiting
+                </Button>
+              </div>
+            ) : (
+              <Button size="sm" variant="outline" className="mt-2" onClick={() => setConfirmRelease(true)}>
+                Release payment
+              </Button>
+            )}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Single bill ──────────────────────────────────────────────────────
-function BillView({ bill, isLoading, isError, error, onBack }) {
+function BillView({ restaurantId, bill, isLoading, isError, error, onBack }) {
   const [historyOpen, setHistoryOpen] = useState(false);
 
   if (isError) {
@@ -84,6 +210,14 @@ function BillView({ bill, isLoading, isError, error, onBack }) {
           <Button variant="outline" className="gap-2" onClick={() => window.print()}>
             <Printer className="h-4 w-4" /> Print
           </Button>
+          {/* What this paid dine-in bill earns the restaurant (Payments & Payouts). */}
+          {bill.payment?.isPaid && bill.type === "dine_in" ? (
+            <Button asChild variant="outline" className="gap-2">
+              <Link to={`/payments/bills/${bill._id}`}>
+                <Wallet className="h-4 w-4" /> Payment details
+              </Link>
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -96,6 +230,10 @@ function BillView({ bill, isLoading, isError, error, onBack }) {
           />
         </CardContent>
       </Card>
+
+      {bill.type === "dine_in" && !bill.payment?.isPaid && bill.status === "open" ? (
+        <CounterSettle restaurantId={restaurantId} bill={bill} />
+      ) : null}
     </>
   );
 }
@@ -135,6 +273,7 @@ function BillRoute({ restaurantId, billId, orderId, onBack }) {
 
   return (
     <BillView
+      restaurantId={restaurantId}
       bill={source.data ?? null}
       isLoading={source.isLoading}
       isError={source.isError}
