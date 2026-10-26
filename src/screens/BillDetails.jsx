@@ -23,6 +23,7 @@ import {
 } from "@/hooks/owner/useBills";
 import { useToast } from "@/components/Toaster";
 import BillDocument from "@/components/BillDocument";
+import ConfirmPaymentDialog from "@/components/ConfirmPaymentDialog";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,8 @@ function CounterSettle({ restaurantId, bill }) {
   const release = useReleaseBillPayment(restaurantId);
   const [method, setMethod] = useState("cash");
   const [confirmRelease, setConfirmRelease] = useState(false);
+  // "Mark as paid" opens a confirmation first; the bill is closed only from there.
+  const [confirmPaid, setConfirmPaid] = useState(false);
   const [error, setError] = useState("");
   // A guest started paying this bill online at some point (the Razorpay order is on it). If
   // they abandoned it the bill may still be held at that total with the table locked.
@@ -75,6 +78,8 @@ function CounterSettle({ restaurantId, bill }) {
       const message = counterErrorMessage(err);
       setError(message);
       toast.error(message);
+    } finally {
+      setConfirmPaid(false);
     }
   }
 
@@ -122,9 +127,18 @@ function CounterSettle({ restaurantId, bill }) {
             </button>
           ))}
         </div>
-        <Button onClick={settle} disabled={markPaid.isPending} className="w-full sm:w-auto">
+        <Button onClick={() => setConfirmPaid(true)} disabled={markPaid.isPending} className="w-full sm:w-auto">
           {markPaid.isPending ? "Settling…" : `Mark ${formatMoney(bill.charges?.grandTotal)} as paid`}
         </Button>
+        <ConfirmPaymentDialog
+          open={confirmPaid}
+          amount={bill.charges?.grandTotal}
+          methodLabel={COUNTER_METHODS.find((m) => m.value === method)?.label ?? method}
+          tableNumber={bill.tableNumber}
+          pending={markPaid.isPending}
+          onConfirm={settle}
+          onCancel={() => setConfirmPaid(false)}
+        />
 
         {onlineStarted ? (
           <div className="rounded-xl bg-[#FFF4E5] px-3 py-2.5 text-xs text-[#8A4B00]">

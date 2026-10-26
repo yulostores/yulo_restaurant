@@ -40,6 +40,7 @@ import {
 // The public restaurant endpoint needs no auth, so a staff token can read it.
 import { useRestaurant } from "@/hooks/customer/useMenu";
 import BillDocument from "@/components/BillDocument";
+import ConfirmPaymentDialog from "@/components/ConfirmPaymentDialog";
 import QRScannerModal from "@/components/QRScannerModal";
 import { parseTableQr } from "@/lib/tableQr";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -128,6 +129,8 @@ function BillPanel({ restaurantId, session, onClose }) {
   const [method, setMethod] = useState("cash");
   const [error, setError] = useState("");
   const [confirmRelease, setConfirmRelease] = useState(false);
+  // "Mark as paid" opens a confirmation first; the bill is closed only from there.
+  const [confirmPaid, setConfirmPaid] = useState(false);
   // A guest started paying this bill from the QR menu: the bill is held at that total and
   // the table locked against new rounds until the payment settles, they back out, someone
   // releases it, or the hold lapses (30 min with nothing paid). Taking payment at the
@@ -148,6 +151,7 @@ function BillPanel({ restaurantId, session, onClose }) {
       onClose();
     } catch (err) {
       const message = settleErrorMessage(err);
+      setConfirmPaid(false);
       setError(message);
       toast.error(message);
     }
@@ -246,12 +250,21 @@ function BillPanel({ restaurantId, session, onClose }) {
                   </div>
                   <button
                     type="button"
-                    onClick={settle}
+                    onClick={() => setConfirmPaid(true)}
                     disabled={isPending}
                     className="w-full rounded-xl bg-brand-gradient py-3 text-sm font-bold text-white disabled:opacity-60"
                   >
                     {isPending ? "Closing…" : "Mark as paid at the counter"}
                   </button>
+                  <ConfirmPaymentDialog
+                    open={confirmPaid}
+                    amount={bill.charges?.grandTotal}
+                    methodLabel={PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method}
+                    tableNumber={bill.tableNumber}
+                    pending={isPending}
+                    onConfirm={settle}
+                    onCancel={() => setConfirmPaid(false)}
+                  />
                 </div>
               )
             }
