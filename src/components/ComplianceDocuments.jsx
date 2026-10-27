@@ -20,6 +20,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import DocumentViewer, { documentFileName } from "@/components/DocumentViewer";
 import {
   ALLOWED_DOCUMENT_TYPES,
@@ -189,6 +190,8 @@ export default function ComplianceDocuments({ restaurantId, className }) {
   // Only the document *type* is held: verifying or replacing refetches the list, and a
   // snapshotted copy would keep the viewer pointed at the previous file.
   const [viewingType, setViewingType] = useState(null);
+  // The document waiting on the "remove" confirm: { type, docId, label }.
+  const [removing, setRemoving] = useState(null);
 
   const byType = Object.fromEntries(documents.map((d) => [d.type, d]));
   const viewedDoc = viewingType ? byType[viewingType] : null;
@@ -243,6 +246,7 @@ export default function ComplianceDocuments({ restaurantId, className }) {
       setError(type, errorMessage(err, "Could not remove that document."));
     } finally {
       setBusyType(null);
+      setRemoving(null);
     }
   };
 
@@ -289,7 +293,9 @@ export default function ComplianceDocuments({ restaurantId, className }) {
                   busy={busyType === definition.type}
                   error={errors[definition.type]}
                   onUpload={(file) => handleUpload(definition.type, file)}
-                  onDelete={() => handleDelete(definition.type, doc?._id)}
+                  onDelete={() =>
+                    setRemoving({ type: definition.type, docId: doc?._id, label: definition.label })
+                  }
                   onView={() => setViewingType(definition.type)}
                 />
               );
@@ -302,6 +308,18 @@ export default function ComplianceDocuments({ restaurantId, className }) {
           platform support.
         </p>
       </CardContent>
+
+      <ConfirmDialog
+        open={!!removing}
+        tone="danger"
+        title={`Remove ${removing?.label ?? "this document"}?`}
+        description="The uploaded file is deleted and taken out of review. You'll need to upload it again before it can be verified — this can't be undone."
+        confirmLabel="Remove document"
+        pendingLabel="Removing…"
+        pending={deleteMutation.isPending}
+        onConfirm={() => handleDelete(removing.type, removing.docId)}
+        onCancel={() => setRemoving(null)}
+      />
 
       <DocumentViewer
         open={!!viewedDoc}

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -19,6 +20,8 @@ import {
   BellRing,
   Wallet,
 } from "lucide-react";
+
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 import RestaurantLogo from "@/components/RestaurantLogo";
 import { cn } from "@/lib/utils";
@@ -125,8 +128,17 @@ export default function Sidebar({ isOpen, onClose }) {
   // (fresh signup, pre-approval) — otherwise the sidebar carries their own brand.
   const storeName = restaurant?.name || "Yulo Stores";
 
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
   async function handleLogout() {
-    await logout();
+    setLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      setLoggingOut(false);
+      setConfirmLogout(false);
+    }
     navigate("/owner/login", { replace: true });
   }
 
@@ -218,9 +230,21 @@ export default function Sidebar({ isOpen, onClose }) {
         </div>
 
         <div className="border-t border-brand-cream/10 p-4">
-          <NavItem icon={LogOut} label="Logout" onClick={handleLogout} />
+          <NavItem icon={LogOut} label="Logout" onClick={() => setConfirmLogout(true)} />
         </div>
       </aside>
+
+      <ConfirmDialog
+        open={confirmLogout}
+        title="Log out of Yulo?"
+        description="You'll be signed out of the restaurant portal on this device and will need your email and password to sign back in. New order alerts stop on this screen until you do."
+        icon={<LogOut className="size-5" />}
+        confirmLabel="Log out"
+        pendingLabel="Logging out…"
+        pending={loggingOut}
+        onConfirm={handleLogout}
+        onCancel={() => setConfirmLogout(false)}
+      />
     </>
   );
 }

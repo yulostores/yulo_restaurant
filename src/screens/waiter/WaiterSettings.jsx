@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LogOut, UserRound } from "lucide-react";
 
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { useStaffAuth } from "@/context/StaffAuthContext";
 import WaiterLayout, { WaiterPageHeader } from "./WaiterLayout";
 
@@ -8,8 +10,17 @@ export default function WaiterSettings() {
   const navigate = useNavigate();
   const { staff, logout } = useStaffAuth();
 
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
   async function handleLogout() {
-    await logout();
+    setLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      setLoggingOut(false);
+      setConfirmLogout(false);
+    }
     navigate("/staff/login", { replace: true });
   }
 
@@ -33,13 +44,24 @@ export default function WaiterSettings() {
 
           <button
             type="button"
-            onClick={handleLogout}
+            onClick={() => setConfirmLogout(true)}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-cream bg-white py-3.5 text-sm font-bold text-brand-maroon hover:bg-brand-cream/20"
           >
             <LogOut className="h-4 w-4" /> Log out
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmLogout}
+        title="Log out?"
+        description="You'll stop getting table requests and order updates on this device. Signing back in needs a fresh one-time code sent to your phone."
+        icon={<LogOut className="size-5" />}
+        confirmLabel="Log out"
+        pendingLabel="Logging out…"
+        pending={loggingOut}
+        onConfirm={handleLogout}
+        onCancel={() => setConfirmLogout(false)}
+      />
     </WaiterLayout>
   );
 }

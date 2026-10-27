@@ -14,6 +14,7 @@ import {
   useLiveStats,
   useLiveVisitors,
 } from "@/hooks/owner/useLiveMonitor";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,7 +62,10 @@ export default function LiveMonitor() {
   const [offer, setOffer] = useState(EMPTY_OFFER);
   const [offerNote, setOfferNote] = useState("");
 
-  async function fireOffer(event) {
+  // The validated offer waiting on the "broadcast" confirm.
+  const [pendingOffer, setPendingOffer] = useState(null);
+
+  function requestBroadcast(event) {
     event.preventDefault();
     setOfferNote("");
     const percentage = Number(offer.percentage);
@@ -69,11 +73,20 @@ export default function LiveMonitor() {
       setOfferNote("Give the offer a name and a percentage.");
       return;
     }
+    setPendingOffer({
+      offerName: offer.offerName.trim(),
+      percentage,
+      minutes: Number(offer.minutes) || 30,
+    });
+  }
+
+  async function fireOffer() {
+    const { percentage, minutes } = pendingOffer;
     const start = new Date();
-    const end = new Date(start.getTime() + (Number(offer.minutes) || 30) * 60_000);
+    const end = new Date(start.getTime() + minutes * 60_000);
     try {
       await createOffer.mutateAsync({
-        offerName: offer.offerName.trim(),
+        offerName: pendingOffer.offerName,
         type: "percentage",
         percentage,
         startDate: start.toISOString(),
@@ -83,6 +96,8 @@ export default function LiveMonitor() {
       setOfferNote("Offer broadcast to active visitors.");
     } catch (err) {
       setOfferNote(err.message);
+    } finally {
+      setPendingOffer(null);
     }
   }
 
@@ -146,7 +161,7 @@ export default function LiveMonitor() {
           </p>
         </CardHeader>
         <CardContent>
-          <form onSubmit={fireOffer} className="flex flex-wrap items-end gap-4">
+          <form onSubmit={requestBroadcast} className="flex flex-wrap items-end gap-4">
             <div className="space-y-1.5">
               <Label>Offer name</Label>
               <Input
@@ -254,6 +269,17 @@ export default function LiveMonitor() {
           )}
         </CardContent>
       </Card>
+      <ConfirmDialog
+        open={!!pendingOffer}
+        title={`Broadcast "${pendingOffer?.offerName}"?`}
+        description={`${pendingOffer?.percentage}% off goes live right now for ${pendingOffer?.minutes} minutes and is pushed to everyone browsing your menu. Once sent it can't be recalled, and orders placed with it keep the discount.`}
+        icon={<Zap className="size-5" />}
+        confirmLabel="Broadcast offer"
+        pendingLabel="Broadcasting…"
+        pending={createOffer.isPending}
+        onConfirm={fireOffer}
+        onCancel={() => setPendingOffer(null)}
+      />
     </DashboardLayout>
   );
 }

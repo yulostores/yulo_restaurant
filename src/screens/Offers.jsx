@@ -14,6 +14,7 @@ import {
   usePublishDiscount,
 } from "@/hooks/owner/useDiscounts";
 import { useMenuItems, useCategories } from "@/hooks/owner/useMenuItems";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -345,6 +346,9 @@ export default function Offers() {
   const [error, setError]             = useState("");
   const [editingOffer, setEditingOffer] = useState(null);
   const [editForm, setEditForm]       = useState(null);
+  // Deleting an offer and putting one live wait on a confirm:
+  // { kind: "delete", id, name, isDraft } | { kind: "publishDraft", draft } | { kind: "publishNew", name }
+  const [confirm, setConfirm]         = useState(null);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -483,28 +487,27 @@ export default function Offers() {
     setEditForm(fromOffer(draft));
   }
 
-  async function deleteDraft(draftId) {
-    setError("");
-    try {
-      await deleteMutation.mutateAsync(draftId);
-    } catch (err) {
-      setError(describeApiError(err));
-    }
-  }
-
   async function publishDraft(draft) {
     setError("");
     try {
       await publishMutation.mutateAsync(draft._id);
     } catch (err) {
       setError(describeApiError(err));
+    } finally {
+      setConfirm(null);
     }
+  }
+
+  // Validates, then asks before anything goes live.
+  function requestPublish() {
+    const problem = validate(form);
+    if (problem) { setError(problem); return; }
+    setError("");
+    setConfirm({ kind: "publishNew", name: form.name.trim() });
   }
 
   // Create then immediately publish, so "Publish" goes live in one action.
   async function publish() {
-    const problem = validate(form);
-    if (problem) { setError(problem); return; }
     setError("");
     try {
       const res = await createMutation.mutateAsync(toBody(form));
@@ -513,6 +516,8 @@ export default function Offers() {
       setForm(EMPTY);
     } catch (err) {
       setError(describeApiError(err));
+    } finally {
+      setConfirm(null);
     }
   }
 
@@ -563,10 +568,59 @@ export default function Offers() {
     }
   }
 
+  // Drafts and live offers alike; leaves the edit view if that's where it was deleted from.
   async function deleteOffer(id) {
-    await deleteMutation.mutateAsync(id);
-    cancelEdit();
+    setError("");
+    try {
+      await deleteMutation.mutateAsync(id);
+      if (editingOffer && (editingOffer._id ?? editingOffer.id) === id) cancelEdit();
+    } catch (err) {
+      setError(describeApiError(err));
+    } finally {
+      setConfirm(null);
+    }
   }
+
+  function requestDelete(offer) {
+    setConfirm({
+      kind: "delete",
+      id: offer._id ?? offer.id,
+      name: offer.offerName || "this offer",
+      isDraft: offer.status === "draft",
+    });
+  }
+
+  const confirmDialog = (
+    <ConfirmDialog
+      open={!!confirm}
+      tone={confirm?.kind === "delete" ? "danger" : "default"}
+      title={
+        confirm?.kind === "delete"
+          ? `Delete "${confirm.name}"?`
+          : `Publish "${confirm?.kind === "publishDraft" ? confirm.draft.offerName || "this offer" : confirm?.name}"?`
+      }
+      description={
+        confirm?.kind === "delete"
+          ? confirm.isDraft
+            ? "This draft will be deleted. It can't be undone."
+            : "Customers will no longer be able to use this offer. It's deleted for good — this can't be undone."
+          : "It goes live for customers from its start date and lowers what they pay on matching orders. Discounts already given can't be taken back — delete the offer to stop it."
+      }
+      confirmLabel={confirm?.kind === "delete" ? "Delete offer" : "Publish offer"}
+      pendingLabel={confirm?.kind === "delete" ? "Deleting…" : "Publishing…"}
+      pending={
+        confirm?.kind === "delete"
+          ? deleteMutation.isPending
+          : createMutation.isPending || publishMutation.isPending
+      }
+      onConfirm={() => {
+        if (confirm?.kind === "delete") deleteOffer(confirm.id);
+        else if (confirm?.kind === "publishDraft") publishDraft(confirm.draft);
+        else publish();
+      }}
+      onCancel={() => setConfirm(null)}
+    />
+  );
 
   const saving = createMutation.isPending || updateMutation.isPending;
 
@@ -703,7 +757,7 @@ export default function Offers() {
         <div className="flex items-center justify-between">
           <button
             type="button"
-            onClick={() => deleteOffer(editingOffer._id ?? editingOffer.id)}
+            onClick={() => requestDelete(editingOffer)}
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-brand-maroon"
           >
             <Trash2 className="h-4 w-4" /> Delete
@@ -721,6 +775,7 @@ export default function Offers() {
             </Button>
           </div>
         </div>
+        {confirmDialog}
       </DashboardLayout>
     );
   }
@@ -1035,7 +1090,7 @@ export default function Offers() {
                   Save Draft
                 </Button>
                 <Button
-                  onClick={publish}
+                  onClick={requestPublish}
                   disabled={saving}
                   className="bg-brand-gradient px-6 text-white hover:brightness-105"
                 >
@@ -1130,7 +1185,7 @@ export default function Offers() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => publishDraft(draft)}
+                          onClick={() => setConfirm({ kind: "publishDraft", draft })}
                           disabled={saving}
                           className="py-2.5 text-xs font-medium text-brand-orange transition hover:bg-brand-orange/5 disabled:opacity-50"
                         >
@@ -1138,7 +1193,7 @@ export default function Offers() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => deleteDraft(draft._id)}
+                          onClick={() => requestDelete(draft)}
                           className="py-2.5 text-xs font-medium text-muted-foreground transition hover:bg-red-50 hover:text-red-500"
                         >
                           Delete
@@ -1207,9 +1262,9 @@ export default function Offers() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => deleteOffer(offer._id ?? offer.id)}
+                        onClick={() => requestDelete(offer)}
                         className="text-muted-foreground hover:text-brand-maroon"
-                        aria-label="Delete"
+                        aria-label={`Delete ${offer.offerName ?? "offer"}`}
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -1236,6 +1291,7 @@ export default function Offers() {
           <Check className="h-4 w-4" /> Coupon code copied
         </div>
       )}
+      {confirmDialog}
     </DashboardLayout>
   );
 }

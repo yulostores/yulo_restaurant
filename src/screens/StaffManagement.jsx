@@ -16,6 +16,7 @@ import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { useStaff, useCreateStaff, useRemoveStaff, useUpdateStaff } from "@/hooks/owner/useStaff";
 import { errorMessage, isNotApprovedError } from "@/lib/errors";
 import { formatPhone, isValidPhone, sanitizePhoneInput, toPhoneDigits } from "@/lib/phone";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +72,9 @@ export default function StaffManagement() {
   const [actionError, setActionError] = useState("");
   // The member just added — shown once so the owner can tell them how to sign in.
   const [issued, setIssued] = useState(null);
+  // Members awaiting a confirm: both remove and deactivate sign them out everywhere at once.
+  const [removing, setRemoving] = useState(null);
+  const [deactivating, setDeactivating] = useState(null);
 
   const canManage = isApproved && !!restaurantId;
 
@@ -100,7 +104,16 @@ export default function StaffManagement() {
     }
   }
 
-  async function handleToggleActive(member) {
+  // Activating is harmless and stays one tap; deactivating ends their sessions, so it asks.
+  function handleToggleActive(member) {
+    if (member.isActive) {
+      setDeactivating(member);
+      return;
+    }
+    toggleActive(member);
+  }
+
+  async function toggleActive(member) {
     setActionError("");
     try {
       await updateMutation.mutateAsync({
@@ -113,6 +126,8 @@ export default function StaffManagement() {
           ? `${member.name}'s number now belongs to another active staff member. Give ${member.name} a new number (Edit) to reactivate them.`
           : errorMessage(err, "Couldn't update this staff member. Please try again."),
       );
+    } finally {
+      setDeactivating(null);
     }
   }
 
@@ -125,13 +140,16 @@ export default function StaffManagement() {
     }
   }
 
-  async function handleRemove(staffId) {
-    if (!window.confirm("Deactivate this staff member? They will no longer be able to sign in.")) return;
+  async function confirmRemove() {
+    const member = removing;
+    if (!member) return;
     setActionError("");
     try {
-      await removeMutation.mutateAsync(staffId);
+      await removeMutation.mutateAsync(member._id);
     } catch (err) {
       setActionError(errorMessage(err, "Couldn't remove this staff member. Please try again."));
+    } finally {
+      setRemoving(null);
     }
   }
 
@@ -286,7 +304,7 @@ export default function StaffManagement() {
             members={chefs}
             emptyText={canManage ? "No chefs added yet." : "Chefs you add will appear here."}
             onToggle={handleToggleActive}
-            onRemove={handleRemove}
+            onRemove={setRemoving}
             onSavePhone={handleSavePhone}
             updatePending={updateMutation.isPending}
             removePending={removeMutation.isPending}
@@ -298,13 +316,36 @@ export default function StaffManagement() {
             members={waiters}
             emptyText={canManage ? "No waiters added yet." : "Waiters you add will appear here."}
             onToggle={handleToggleActive}
-            onRemove={handleRemove}
+            onRemove={setRemoving}
             onSavePhone={handleSavePhone}
             updatePending={updateMutation.isPending}
             removePending={removeMutation.isPending}
           />
         </>
       )}
+
+      <ConfirmDialog
+        open={!!removing}
+        tone="danger"
+        title={`Remove ${removing?.name ?? "this staff member"}?`}
+        description={`${removing?.name ?? "They"} will be signed out on every device right away and won't be able to sign in. Their account stays on the list as Inactive — signing them out can't be undone.`}
+        confirmLabel="Remove"
+        pendingLabel="Removing…"
+        pending={removeMutation.isPending}
+        onConfirm={confirmRemove}
+        onCancel={() => setRemoving(null)}
+      />
+      <ConfirmDialog
+        open={!!deactivating}
+        tone="danger"
+        title={`Deactivate ${deactivating?.name ?? "this staff member"}?`}
+        description={`${deactivating?.name ?? "They"} will be signed out on every device right away and can't sign in until you activate them again. Signing them out can't be undone.`}
+        confirmLabel="Deactivate"
+        pendingLabel="Deactivating…"
+        pending={updateMutation.isPending}
+        onConfirm={() => toggleActive(deactivating)}
+        onCancel={() => setDeactivating(null)}
+      />
     </DashboardLayout>
   );
 }
@@ -365,6 +406,8 @@ function StaffCard({ member, onToggle, onRemove, onSavePhone, updatePending, rem
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState("");
+  // A replacement number waiting on the "signs them out" confirm.
+  const [pendingPhone, setPendingPhone] = useState(null);
 
   function startEdit() {
     setDraft(member.phone ?? "");
@@ -383,6 +426,16 @@ function StaffCard({ member, onToggle, onRemove, onSavePhone, updatePending, rem
       setEditing(false);
       return;
     }
+    // Replacing a number they sign in with ends their sessions — ask first. Adding one to a
+    // member who has none signs nobody out, so it saves straight away.
+    if (member.phone) {
+      setPendingPhone(phone);
+      return;
+    }
+    await commitPhone(phone);
+  }
+
+  async function commitPhone(phone) {
     setSaving(true);
     setEditError("");
     try {
@@ -392,6 +445,7 @@ function StaffCard({ member, onToggle, onRemove, onSavePhone, updatePending, rem
       setEditError(err.message);
     } finally {
       setSaving(false);
+      setPendingPhone(null);
     }
   }
 
@@ -445,7 +499,7 @@ function StaffCard({ member, onToggle, onRemove, onSavePhone, updatePending, rem
             {member.isActive ? "Deactivate" : "Activate"}
           </button>
           <button
-            onClick={() => onRemove(member._id)}
+            onClick={() => onRemove(member)}
             disabled={removePending}
             title="Remove staff member"
             aria-label={`Remove ${member.name}`}
@@ -489,6 +543,18 @@ function StaffCard({ member, onToggle, onRemove, onSavePhone, updatePending, rem
           </div>
         </form>
       )}
+
+      <ConfirmDialog
+        open={!!pendingPhone}
+        tone="danger"
+        title={`Change ${member.name}'s number?`}
+        description={`${member.name} will sign in with +91 ${formatPhone(pendingPhone ?? "")} from now on, and is signed out on every device straight away. Signing them out can't be undone.`}
+        confirmLabel="Change number"
+        pendingLabel="Saving…"
+        pending={saving}
+        onConfirm={() => commitPhone(pendingPhone)}
+        onCancel={() => setPendingPhone(null)}
+      />
     </div>
   );
 }

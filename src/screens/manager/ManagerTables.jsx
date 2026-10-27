@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { Plus, QrCode, Trash2 } from "lucide-react";
 
+import ConfirmDialog from "@/components/ConfirmDialog";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,6 +47,10 @@ export default function ManagerTables() {
   const [form, setForm] = useState(EMPTY);
   const [showForm, setShowForm] = useState(false);
   const [actionError, setActionError] = useState("");
+  // Taking a table out of service — delete, or switching it off — waits on a confirm. Both
+  // deactivate it server-side, and the tables list only returns active tables, so it drops
+  // off this screen with no switch left to bring it back.
+  const [confirming, setConfirming] = useState(null); // { table, kind: "delete" | "deactivate" }
 
   async function add(event) {
     event.preventDefault();
@@ -62,6 +67,11 @@ export default function ManagerTables() {
     }
   }
 
+  function requestToggle(table) {
+    if (table.isActive) setConfirming({ table, kind: "deactivate" });
+    else toggleActive(table);
+  }
+
   async function toggleActive(table) {
     setActionError("");
     try {
@@ -71,16 +81,19 @@ export default function ManagerTables() {
       });
     } catch (err) {
       setActionError(err.message);
+    } finally {
+      setConfirming(null);
     }
   }
 
   async function remove(table) {
-    if (!window.confirm(`Delete table ${table.identifier}?`)) return;
     setActionError("");
     try {
       await deleteTable.mutateAsync(table._id);
     } catch (err) {
       setActionError(err.message);
+    } finally {
+      setConfirming(null);
     }
   }
 
@@ -191,7 +204,7 @@ export default function ManagerTables() {
                       <Switch
                         checked={!!t.isActive}
                         disabled={updateTable.isPending}
-                        onCheckedChange={() => toggleActive(t)}
+                        onCheckedChange={() => requestToggle(t)}
                       />
                     </TableCell>
                     <TableCell className="pr-6 text-right">
@@ -209,7 +222,8 @@ export default function ManagerTables() {
                           size="sm"
                           variant="outline"
                           disabled={deleteTable.isPending}
-                          onClick={() => remove(t)}
+                          onClick={() => setConfirming({ table: t, kind: "delete" })}
+                          aria-label={`Delete table ${t.identifier}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
@@ -229,6 +243,24 @@ export default function ManagerTables() {
           </div>
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={!!confirming}
+        tone="danger"
+        title={
+          confirming?.kind === "delete"
+            ? `Delete table ${confirming.table.identifier}?`
+            : `Take table ${confirming?.table.identifier} out of service?`
+        }
+        description={`Table ${confirming?.table.identifier} disappears from your floor plan and its QR code stops working for guests. It can't be brought back from this screen.`}
+        confirmLabel={confirming?.kind === "delete" ? "Delete table" : "Deactivate table"}
+        pendingLabel={confirming?.kind === "delete" ? "Deleting…" : "Deactivating…"}
+        pending={confirming?.kind === "delete" ? deleteTable.isPending : updateTable.isPending}
+        onConfirm={() =>
+          confirming?.kind === "delete" ? remove(confirming.table) : toggleActive(confirming.table)
+        }
+        onCancel={() => setConfirming(null)}
+      />
     </DashboardLayout>
   );
 }

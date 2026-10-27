@@ -18,6 +18,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { FileText, Loader2, Upload, X } from "lucide-react";
 
 import { Button } from "@/screens/payments/ui";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/Toaster";
@@ -140,6 +141,8 @@ export default function BankAccountForm({
   const [serverErrors, setServerErrors] = useState({});
   const [proofFile, setProofFile] = useState(null);
   const [proofError, setProofError] = useState("");
+  // Validated details waiting on the "send payouts here?" confirm.
+  const [confirming, setConfirming] = useState(false);
   const fileRef = useRef(null);
 
   // Fresh form every time it opens — a half-typed number from a cancelled attempt must not
@@ -152,6 +155,7 @@ export default function BankAccountForm({
     setServerErrors({});
     setProofFile(null);
     setProofError("");
+    setConfirming(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -192,12 +196,25 @@ export default function BankAccountForm({
     setProofFile(file);
   }
 
-  async function submit(e) {
+  // Validates, then asks: where settlements are paid is the one thing on this form a typo
+  // turns into money sent to the wrong account.
+  function submit(e) {
     e.preventDefault();
     setSubmitted(true);
     setServerErrors({});
     if (Object.keys(errors).length > 0) return;
+    setConfirming(true);
+  }
 
+  async function commit() {
+    try {
+      await persist();
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  async function persist() {
     // A first account's proof goes up before the details (so review starts with it); a
     // change's proof can only be uploaded once the request exists, so it goes up after.
     const uploadProof = async () => {
@@ -494,6 +511,29 @@ export default function BankAccountForm({
           </Button>
         </div>
       </form>
+
+      <ConfirmDialog
+        open={confirming}
+        title={isChange ? "Request this bank account change?" : "Send payouts to this account?"}
+        confirmLabel={isChange ? "Request change" : "Save bank account"}
+        pendingLabel="Saving…"
+        pending={busy}
+        onConfirm={commit}
+        onCancel={() => setConfirming(false)}
+      >
+        <p>
+          <span className="font-bold text-foreground">
+            {values.accountHolderName.trim()} · A/c ending {values.accountNumber.slice(-4)} ·{" "}
+            {values.ifsc}
+          </span>
+        </p>
+        <p>
+          {isChange
+            ? "Once Yulo verifies it, every settlement is paid into this account instead of your current one. Until then payouts keep going to the verified account."
+            : "Once Yulo verifies it, your settlements are paid into this account."}{" "}
+          Money sent to a wrong account can't be pulled back — check the number and IFSC.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }

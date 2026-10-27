@@ -5,6 +5,7 @@ import { Eye, LogOut } from "lucide-react";
 import { useStaffAuth } from "@/context/StaffAuthContext";
 import { useKitchenQueue, useKitchenBoard, useUpdateOrderStatus } from "@/hooks/staff/useKitchen";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import OrderDetailsDialog from "@/components/OrderDetailsDialog";
 import RiderPickupOtp from "@/components/RiderPickupOtp";
 import { errorMessage } from "@/lib/errors";
@@ -294,8 +295,17 @@ export default function ChefDashboard() {
   const [viewOrder, setViewOrder] = useState(null);
   const [markReadyBusy, setMarkReadyBusy] = useState(false);
 
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
   async function handleLogout() {
-    await logout();
+    setLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      setLoggingOut(false);
+      setConfirmLogout(false);
+    }
     navigate("/staff/login", { replace: true });
   }
 
@@ -354,7 +364,7 @@ export default function ChefDashboard() {
           </div>
           <button
             type="button"
-            onClick={handleLogout}
+            onClick={() => setConfirmLogout(true)}
             className="flex items-center gap-1.5 rounded-xl border border-brand-cream px-3 py-2 text-xs font-bold text-brand-maroon hover:bg-brand-cream/30 sm:ml-4"
           >
             <LogOut className="h-3.5 w-3.5" /> Logout
@@ -445,6 +455,18 @@ export default function ChefDashboard() {
 
 
       </div>
+
+      <ConfirmDialog
+        open={confirmLogout}
+        title="Log out of the kitchen display?"
+        description="New tickets stop showing on this screen. Signing back in needs a fresh one-time code sent to your phone."
+        icon={<LogOut className="size-5" />}
+        confirmLabel="Log out"
+        pendingLabel="Logging out…"
+        pending={loggingOut}
+        onConfirm={handleLogout}
+        onCancel={() => setConfirmLogout(false)}
+      />
 
       {viewOrder && (
         <OrderDetailsDialog

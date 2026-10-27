@@ -48,6 +48,7 @@ import { catalogApi } from "@/api/catalog.api";
 import DashboardLayout from "@/components/DashboardLayout";
 import ApprovalNotice from "@/components/ApprovalNotice";
 import ComplianceDocuments from "@/components/ComplianceDocuments";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -60,11 +61,36 @@ import {
   applyInputRules,
   brandImageError,
   fieldError,
+  getByPath,
   indexFields,
   inputId,
   setByPath,
   validateFields,
 } from "@/lib/fieldRules";
+
+// Settings that change what guests are charged (or the tax on it). A save that touches any
+// of them asks first and lists the before → after; everything else saves straight away.
+const formatRupees = (v) => (v === "" || v === null || v === undefined ? "none" : `₹${v}`);
+const CHARGE_FIELDS = [
+  {
+    path: "gstRegistered",
+    label: "GST registered",
+    format: (v) => (v ? "On — food GST charged on orders" : "Off — no food GST"),
+  },
+  { path: "settings.gstNumber", label: "GST number", format: (v) => v || "none" },
+  { path: "delivery.baseCharge", label: "Delivery base charge", format: formatRupees },
+  { path: "delivery.freeThreshold", label: "Free delivery above", format: formatRupees },
+];
+
+function chargeChanges(saved, next) {
+  if (!saved || !next) return [];
+  return CHARGE_FIELDS.flatMap((f) => {
+    const before = getByPath(saved, f.path);
+    const after = getByPath(next, f.path);
+    const same = (before ?? "") === (after ?? "") || String(before ?? "") === String(after ?? "");
+    return same ? [] : [{ ...f, before: f.format(before), after: f.format(after) }];
+  });
+}
 
 // `Number(x) || fallback` would turn a deliberate 0 — free delivery, no minimum radius —
 // back into the default, so test for a finite number instead of truthiness.
@@ -497,6 +523,8 @@ export default function StoreSettings() {
   // Optional brand images uploaded with the next save (PATCH /settings).
   const [logoFile, setLogoFile] = useState(null);
   const [bannerFile, setBannerFile] = useState(null);
+  // Charge/tax changes awaiting the owner's confirm before the save goes out.
+  const [pendingCharges, setPendingCharges] = useState(null);
 
   // create-restaurant form (used when restaurantId is null)
   const [creating, setCreating] = useState(false);
@@ -613,6 +641,23 @@ export default function StoreSettings() {
     }
     setStatus(null);
 
+    const changes = chargeChanges(JSON.parse(original), form);
+    if (changes.length > 0) {
+      setPendingCharges(changes);
+      return;
+    }
+    await persist();
+  }
+
+  async function confirmCharges() {
+    try {
+      await persist();
+    } finally {
+      setPendingCharges(null);
+    }
+  }
+
+  async function persist() {
     const gstNumberChanged =
       (JSON.parse(original).settings?.gstNumber ?? "") !== (form.settings?.gstNumber ?? "");
 
@@ -1199,6 +1244,28 @@ export default function StoreSettings() {
           </Button>
         </div>
       </div>
+      <ConfirmDialog
+        open={!!pendingCharges}
+        title="Change what customers are charged?"
+        confirmLabel="Save changes"
+        pendingLabel="Saving…"
+        pending={saving}
+        onConfirm={confirmCharges}
+        onCancel={() => setPendingCharges(null)}
+      >
+        <ul className="space-y-1">
+          {(pendingCharges ?? []).map((c) => (
+            <li key={c.path}>
+              <span className="font-semibold text-foreground">{c.label}:</span> {c.before} →{" "}
+              <span className="font-semibold text-foreground">{c.after}</span>
+            </li>
+          ))}
+        </ul>
+        <p>
+          Orders placed after you save are charged with these settings. Check the amounts
+          before you confirm.
+        </p>
+      </ConfirmDialog>
     </DashboardLayout>
   );
 }
