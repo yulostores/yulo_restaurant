@@ -349,7 +349,8 @@ export default function LiveDashboard({ restaurantId }) {
         <CardContent className="p-8 text-center">
           <h2 className="text-base font-bold">Live customer activity isn't switched on yet</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            When it is, you'll see customers browsing your menu here as it happens.
+            Ask the Yulo team to turn it on for your restaurant. Then you'll see customers browsing
+            your menu here as it happens.
           </p>
         </CardContent>
       </Card>
