@@ -7,6 +7,7 @@ import {
   refreshSession,
   onSessionEnded,
 } from "@/api/client";
+import { getOwnerSocket } from "@/lib/socket";
 
 // Owner auth uses the owner-only endpoints: POST /api/owner/auth/{signup,login,logout}.
 // A customer or admin account is rejected there with 401 INVALID_CREDENTIALS.
@@ -54,6 +55,7 @@ export function OwnerAuthProvider({ children }) {
   // Ends the local session without calling POST /owner/auth/logout — the server has
   // already rejected the refresh cookie, so there is nothing left to revoke.
   const endSession = useCallback(() => {
+    getOwnerSocket().disconnect();
     setAccessToken("owner", null);
     setUser(null);
     setRestaurant(null);
@@ -199,6 +201,8 @@ export function OwnerAuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     try { await authApi.ownerLogout(); } catch { /* silent */ }
+    // Leave the live room now — nothing about customers may reach a signed-out screen.
+    getOwnerSocket().disconnect();
     setAccessToken("owner", null);
     setUser(null);
     setRestaurant(null);

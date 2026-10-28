@@ -299,10 +299,50 @@ export const ownerApi = {
 
   // ── Live Monitor ─────────────────────────────────────────────────
   getLiveStats: (rId) => client.get(`/owner/${rId}/live-monitor`),
-  getLiveVisitors: (rId) => client.get(`/owner/${rId}/live-monitor/visitors`),
   getLiveRepeat: (rId) => client.get(`/owner/${rId}/live-monitor/repeat`),
-  createTargetOffer: (rId, body) =>
-    client.post(`/owner/${rId}/live-monitor/offer`, body),
+
+  // ── Live activity & personal offers (API.md § Live Activity & Personal Offers) ──
+  // Every route 404s while the feature is off for this restaurant. Money is in paise.
+  //
+  // @typedef {"active"|"idle"|"abandoned"|"ended"|"converted"} SessionStatus
+  // @typedef {"GUEST"|"OPTED_OUT"|"OFFER_OPEN"|"DAILY_LIMIT"|"SESSION_CLOSED"} NotEligibleReason
+  // @typedef {{ id: string, displayName: string, isGuest: boolean, pastOrderCount: number,
+  //   status: SessionStatus, startedAt: string, lastActivityAt: string,
+  //   lastEvent: { type: string, label: string, at: string } | null,
+  //   cart: { itemCount: number, totalPaise: number, items: { name: string, qty: number }[] },
+  //   cameFromSearch: string | null, eventCount: number, orderId: string | null,
+  //   offerEligible: boolean | null, notEligibleReason: NotEligibleReason | null }} SessionRow
+  // @typedef {{ live: number, cartsInProgress: number, cartsTotalPaise: number,
+  //   abandonedLastHour: number }} SessionsSummary
+  // @typedef {{ id: string, type: string, label: string, at: string, data: object }} SessionEvent
+  // @typedef {{ id: string, title: string, type: "percentage"|"flat_amount",
+  //   percentage: number|null, flatAmount: number|null, maxDiscountAmount: number,
+  //   minimumOrderValue: number, applicableItems: string[], status: string, sentAt: string,
+  //   expiresAt: string, deliveredAt: string|null, viewedAt: string|null,
+  //   appliedAt: string|null, redeemedAt: string|null, revokedAt: string|null,
+  //   redemptionCount: number, orderId: string|null }} PersonalOffer
+
+  /** GET …/live/sessions — `{ sessions: SessionRow[], summary: SessionsSummary }`.
+   *  @param {{ status?: string, limit?: number }} params status: comma list of active,idle,abandoned; limit ≤ 50 */
+  listLiveSessions: (rId, params = {}) => client.get(`/owner/${rId}/live/sessions`, { params }),
+  /** GET …/live/sessions/:id — `{ session: SessionRow, cart: { items, totalPaise, updatedAt }, offers: PersonalOffer[] }`. */
+  getLiveSession: (rId, sessionId) => client.get(`/owner/${rId}/live/sessions/${sessionId}`),
+  /** GET …/live/sessions/:id/events — `{ events: SessionEvent[], nextBefore: string|null }`, newest first.
+   *  @param {{ before?: string, limit?: number }} params limit ≤ 100 */
+  listLiveSessionEvents: (rId, sessionId, params = {}) =>
+    client.get(`/owner/${rId}/live/sessions/${sessionId}/events`, { params }),
+  /** POST …/live/offers — 201 `{ offer: PersonalOffer }`; with `preview: true`, 200
+   *  `{ wouldSavePaise, cartTotalPaise, eligibleSubtotalPaise, issue? }` and nothing saved. */
+  sendLiveOffer: (rId, body) => client.post(`/owner/${rId}/live/offers`, body),
+  /** POST …/live/offers/:id/revoke — `{ offer: PersonalOffer }`; 409 OFFER_NOT_REVOCABLE. */
+  revokeLiveOffer: (rId, offerId) => client.post(`/owner/${rId}/live/offers/${offerId}/revoke`),
+  /** GET …/live/offers — `{ offers: (PersonalOffer & { customerName, orderTotalPaise })[], from, to, page, limit, hasMore }`.
+   *  @param {{ from?: string, to?: string, page?: number, limit?: number }} params IST dates YYYY-MM-DD, ≤ 90 days, limit ≤ 50 */
+  listLiveOffers: (rId, params = {}) => client.get(`/owner/${rId}/live/offers`, { params }),
+  /** GET …/live/metrics — `{ range, from, to, sent, delivered, viewed, applied, redeemed,
+   *  expired, revoked, conversionRate, revenuePaise, discountPaise }`.
+   *  @param {"today"|"7d"|"30d"} range */
+  getLiveMetrics: (rId, range = "today") => client.get(`/owner/${rId}/live/metrics`, { params: { range } }),
 
   // ── Customer Requests (manager view — runs on the owner session) ──
   // status: "pending" | "acknowledged" | "resolved"; omit to get all.
