@@ -34,7 +34,8 @@ function normalizeOrder(o) {
     orderType:    o.type ?? "dine_in",
     items:        (o.items ?? []).map((i) => ({ ...i, title: i.name })),
     status:       o.status,
-    instructions: o.specialInstructions ?? "",
+    // The waiter's kitchen note and the customer's cooking request, on one line.
+    instructions: [o.specialInstructions, o.cookingInstructions].filter(Boolean).join(" · "),
     createdAt:    o.createdAt ?? null,
     // When the restaurant accepted it — the moment it actually reached the kitchen.
     acceptedAt:   o.acceptedAt ?? null,

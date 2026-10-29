@@ -271,6 +271,12 @@ function ApprovalCard({ order, now, timeoutMinutes, busy, onAccept, onReject, on
           </p>
         ) : null}
 
+        {order.cookingInstructions ? (
+          <p className="text-xs italic text-muted-foreground">
+            Cooking request: “{order.cookingInstructions}”
+          </p>
+        ) : null}
+
         {order.cookingRequests || order.extraCutlery || order.vegFleetOptIn ? (
           <div className="flex flex-wrap gap-1.5">
             {order.cookingRequests ? <Badge variant="muted">Cooking requests</Badge> : null}

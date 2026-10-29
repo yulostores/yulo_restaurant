@@ -310,6 +310,15 @@ export default function OrderDetailsDialog({ order, onClose, action }) {
             </div>
           ) : null}
 
+          {order.cookingInstructions ? (
+            <div className="mt-5">
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                Cooking request
+              </p>
+              <p className="text-sm text-muted-foreground">“{order.cookingInstructions}”</p>
+            </div>
+          ) : null}
+
           {order.deliveryAddress?.street ? (
             <div className="mt-5">
               <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
