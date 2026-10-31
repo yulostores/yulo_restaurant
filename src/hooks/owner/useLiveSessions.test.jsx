@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({}));
 vi.mock("@/api/owner.api", () => ({ ownerApi: api }));
 
 import {
+  detailCartChanged,
   liveKeys,
   patchDetailOffer,
   prependEvent,
@@ -93,6 +94,28 @@ describe("useLiveSocket", () => {
 
     act(() => owner.emit("session_updated", sessionRow({ id: "b", ago: 0, status: "abandoned" })));
     expect(ids(qc.getQueryData(liveKeys.sessions(R, "abandoned")))).toEqual(["b"]);
+  });
+
+  it("refetches the open session when its cart changed, not when only the header moved", () => {
+    const empty = { items: [], totalPaise: 0 };
+    const added = { itemCount: 1, totalPaise: 26100, items: [{ name: "Paneer", qty: 1 }] };
+    qc.setQueryData(liveKeys.session(R, "a"), { session: sessionRow({ id: "a", ago: 5, cart: { itemCount: 0, totalPaise: 0, items: [] } }), cart: empty, offers: [] });
+    api.getLiveSession = vi.fn(() => new Promise(() => {}));
+    mount();
+
+    act(() => owner.emit("session_updated", sessionRow({ id: "a", ago: 4, cart: { itemCount: 0, totalPaise: 0, items: [] } })));
+    expect(qc.getQueryState(liveKeys.session(R, "a")).isInvalidated).toBe(false);
+
+    act(() => owner.emit("session_updated", sessionRow({ id: "a", ago: 0, cart: added })));
+    expect(qc.getQueryState(liveKeys.session(R, "a")).isInvalidated).toBe(true);
+  });
+
+  it("detailCartChanged compares the row's cart with the detail's", () => {
+    const detail = { session: sessionRow({ id: "a", ago: 2 }), cart: { items: [{ name: "Dal", qty: 1, unitPricePaise: 18000 }], totalPaise: 18900 } };
+    expect(detailCartChanged(detail, sessionRow({ id: "a", ago: 0, cart: { totalPaise: 18900, items: [{ name: "Dal", qty: 1 }] } }))).toBe(false);
+    expect(detailCartChanged(detail, sessionRow({ id: "a", ago: 0, cart: { totalPaise: 37800, items: [{ name: "Dal", qty: 2 }] } }))).toBe(true);
+    expect(detailCartChanged(detail, sessionRow({ id: "a", ago: 5, cart: { totalPaise: 0, items: [] } }))).toBe(false); // older row
+    expect(detailCartChanged(detail, sessionRow({ id: "b", ago: 0, cart: { totalPaise: 0, items: [] } }))).toBe(false); // other session
   });
 
   it("session_removed deletes the row and tells the screen", () => {

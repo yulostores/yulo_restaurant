@@ -922,7 +922,7 @@ export default function StaffLoginPage() {
             </div>
           </div>
 
-          <p className="text-[11px] text-white/20">© 2025 Yulo Stores</p>
+          <p className="text-[11px] text-white/20">© {new Date().getFullYear()} Yulo Stores</p>
         </aside>
 
         {/* ── Form panel ── */}

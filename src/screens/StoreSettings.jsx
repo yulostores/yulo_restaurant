@@ -321,15 +321,20 @@ function CuisineEditor({ field, value, onChange }) {
     staleTime: 60 * 60_000,
   });
 
+  // A typed comma makes a chip (onKeyDown), but a pasted "North Indian, Biryani" never
+  // types one — it used to become a single cuisine named "North Indian, Biryani" that no
+  // cuisine filter matches. So the draft is split on commas here as well.
   function add() {
-    const typed = draft.trim();
+    const entries = draft.split(",").map((s) => s.trim()).filter(Boolean);
     setDraft("");
-    if (!typed) return;
-    const folded = typed.toLowerCase();
-    // Prefer the platform-wide spelling over whatever case the owner typed.
-    const next = known.find((c) => c.name.toLowerCase() === folded)?.name ?? typed;
-    if (value.some((c) => c.toLowerCase() === folded)) return;
-    onChange([...value, next]);
+    const next = [...value];
+    for (const typed of entries) {
+      const folded = typed.toLowerCase();
+      if (next.some((c) => c.toLowerCase() === folded)) continue;
+      // Prefer the platform-wide spelling over whatever case the owner typed.
+      next.push(known.find((c) => c.name.toLowerCase() === folded)?.name ?? typed);
+    }
+    if (next.length !== value.length) onChange(next);
   }
 
   // Don't suggest what's already on the chip row.

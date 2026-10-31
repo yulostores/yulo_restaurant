@@ -204,11 +204,23 @@ export default function MenuManagement() {
       setStatusMsg(`Item name must be at most ${ITEM_NAME_MAX} characters.`);
       return;
     }
+    const mrp = Number(item.sellingPrice);
+    const discounted = item.discountedPrice === "" || item.discountedPrice == null ? null : Number(item.discountedPrice);
+    if (!(mrp > 0)) {
+      setStatusMsg("Selling price must be a positive amount.");
+      return;
+    }
+    if (discounted != null && !(discounted > 0 && discounted <= mrp)) {
+      setStatusMsg("Discounted price must be more than ₹0 and not above the selling price (MRP).");
+      return;
+    }
     const formData = new FormData();
     formData.append("name", name);
     formData.append("description", item.description ?? "");
     formData.append("sellingPrice", String(item.sellingPrice));
-    if (item.discountedPrice) formData.append("discountedPrice", String(item.discountedPrice));
+    // Always sent — an empty value is how removing a discount reaches the server; when it was
+    // only sent if set, clearing it on an edit left the old discount in place.
+    formData.append("discountedPrice", discounted == null ? "" : String(discounted));
     formData.append("categoryId", item.categoryId);
     formData.append("foodType", item.foodType);
     formData.append("prepTime", String(item.prepTime));

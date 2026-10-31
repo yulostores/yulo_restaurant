@@ -132,7 +132,7 @@ export default function OwnerLoginPage() {
           </div>
         </div>
 
-        <p className="text-xs text-white/20">© 2025 Yulo Stores</p>
+        <p className="text-xs text-white/20">© {new Date().getFullYear()} Yulo Stores</p>
       </div>
 
       {/* ── Right form panel ── */}

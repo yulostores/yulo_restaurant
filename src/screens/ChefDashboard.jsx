@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 function normalizeOrder(o) {
   return {
     id:           String(o._id),
-    number:       String(o._id).slice(-5).toUpperCase(),
+    number:       String(o._id).slice(-6).toUpperCase(),
     batchNumber:  o.batchNumber ?? null,
     sessionId:    o.tableSessionId ? String(o.tableSessionId) : null,
     tableNumber:  o.tableNumber ?? null,

@@ -343,7 +343,7 @@ function SessionCard({
                   <span className="text-xs font-bold text-muted-foreground">
                     Round {o.round ?? o.batchNumber ?? "—"}
                     {roundTime(o.createdAt) ? " · " + roundTime(o.createdAt) : ""}
-                    {" · #" + String(o._id).slice(-5).toUpperCase()}
+                    {" · #" + String(o._id).slice(-6).toUpperCase()}
                   </span>
                   <span
                     className={cn(

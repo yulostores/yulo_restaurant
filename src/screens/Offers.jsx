@@ -94,14 +94,22 @@ const EMPTY = {
   applicableItems: [],
 };
 
+// Reads both the form's shape ({ discountType, discountValue }) and a saved offer as the API
+// returns it ({ type, percentage, flatAmount }). The Active Offers table passes the latter, which
+// this used to ignore — so every published offer read "Tableware" (a misspelt fallback).
 function discountLabel(offer) {
-  if (offer.discountType === "percentage")  return `${offer.discountValue}% Off`;
-  if (offer.discountType === "flat_amount") return `₹${offer.discountValue} Off`;
-  if (offer.discountType === "free_item") return "Free Item";
-  return "Tableware";
+  const type = offer.discountType ?? offer.type;
+  const value = offer.discountValue ?? (type === "percentage" ? offer.percentage : offer.flatAmount);
+  if (type === "percentage")  return `${value}% Off`;
+  if (type === "flat_amount") return `₹${value} Off`;
+  if (type === "free_item") return offer.freeItemName ? `Free ${offer.freeItemName}` : "Free Item";
+  if (type === "tablewise") return `₹${value} Off · Tables`;
+  return "—";
 }
 
+// Same two shapes: the form's validFrom / validTo, or a saved offer's startDate / endDate.
 function validityLabel(offer) {
+  offer = { validFrom: offer.validFrom ?? offer.startDate, validTo: offer.validTo ?? offer.endDate };
   if (!offer.validFrom && !offer.validTo) return "—";
   const fmt = (v) =>
     v ? new Date(v).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "—";

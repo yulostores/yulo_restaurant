@@ -77,6 +77,20 @@ export function patchDetailSession(detail, row) {
   return { ...detail, session: row };
 }
 
+/**
+ * Whether a `session_updated` row says the open session's cart moved on from the one its detail
+ * shows. The row carries only names and quantities, while the detail's cart table needs prices,
+ * so a change is refetched rather than patched — before, the panel kept the cart it opened with
+ * ("Nothing in the cart.") while the row beside it showed what the customer had just added.
+ */
+export function detailCartChanged(detail, row) {
+  if (!detail?.cart || detail.session?.id !== row.id || !row.cart) return false;
+  if (time(row.lastActivityAt) < time(detail.session.lastActivityAt)) return false;
+  if ((row.cart.totalPaise ?? 0) !== (detail.cart.totalPaise ?? 0)) return true;
+  const lines = (items) => (items ?? []).map((i) => `${i.name}×${i.qty}`).join("|");
+  return lines(row.cart.items) !== lines(detail.cart.items);
+}
+
 /** An `activity_event` goes on top of the timeline's newest page — once, however often it arrives. */
 export function prependEvent(pages, event) {
   if (!pages?.pages?.length) return pages;
@@ -289,7 +303,10 @@ export function useLiveSocket(restaurantId, { onSessionRemoved, owner = getOwner
     const offs = [
       owner.on("session_updated", (row) => {
         forEachList((data, filterKey) => upsertSession(data, row, filterKey));
-        qc.setQueryData(liveKeys.session(restaurantId, row.id), (detail) => patchDetailSession(detail, row));
+        const detailKey = liveKeys.session(restaurantId, row.id);
+        const cartChanged = detailCartChanged(qc.getQueryData(detailKey), row);
+        qc.setQueryData(detailKey, (detail) => patchDetailSession(detail, row));
+        if (cartChanged) qc.invalidateQueries({ queryKey: detailKey });
         refreshSummarySoon();
       }),
       owner.on("session_removed", ({ sessionId }) => {
