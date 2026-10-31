@@ -12,6 +12,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Printer, Receipt, Search, Wallet } from "lucide-react";
+import { printBill } from "@/lib/printBill";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import {
@@ -221,7 +222,7 @@ function BillView({ restaurantId, bill, isLoading, isError, error, onBack }) {
             <Receipt className="h-4 w-4" />
             {historyOpen ? "Hide details" : "View details"}
           </Button>
-          <Button variant="outline" className="gap-2" onClick={() => window.print()}>
+          <Button variant="outline" className="gap-2" onClick={() => printBill(bill)}>
             <Printer className="h-4 w-4" /> Print
           </Button>
           {/* What this paid dine-in bill earns the restaurant (Payments & Payouts). */}
