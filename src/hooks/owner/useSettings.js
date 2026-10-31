@@ -50,6 +50,50 @@ export function useUpdateSettings(restaurantId) {
   });
 }
 
+// PATCH /owner/:rId/restaurant with an exact map point — "Use my current location". Takes
+// { lat, lng }; the server stores GeoJSON order, [lng, lat].
+export function useSetRestaurantLocation(restaurantId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ lat, lng }) =>
+      ownerApi.updateRestaurant(restaurantId, {
+        location: { type: "Point", coordinates: [lng, lat] },
+      }),
+    onSuccess: ({ data }) => {
+      const restaurant = data.data?.restaurant;
+      if (restaurant) {
+        qc.setQueryData(settingsKeys.main(restaurantId), (prev) =>
+          prev ? { ...prev, location: restaurant.location } : restaurant,
+        );
+      }
+    },
+  });
+}
+
+// The device's position, once, as precisely as the browser can give it. Resolves { lat, lng,
+// accuracy } or rejects with an Error whose message an owner can act on.
+export function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      reject(new Error("This browser can't share your location."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      (err) =>
+        reject(
+          new Error(
+            err.code === 1
+              ? "Location permission was denied. Allow location for this site in your browser and try again."
+              : "Couldn't get your location. Try again, ideally standing inside the restaurant.",
+          ),
+        ),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    );
+  });
+}
+
 // Serialises a settings patch into FormData. Objects/arrays are JSON-encoded;
 // File values are appended as-is.
 export function buildSettingsFormData(patch = {}) {

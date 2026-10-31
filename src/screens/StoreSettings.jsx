@@ -30,15 +30,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ChevronDown, ChevronRight, ImagePlus, ImageUp, Landmark, Lock, MapPin, MapPinOff, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ImagePlus, ImageUp, Landmark, LocateFixed, Lock, MapPin, MapPinOff, X } from "lucide-react";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import {
   buildSettingsFormData,
+  getCurrentPosition,
   useDeliverySettings,
   useHours,
   useSettings,
   useSettingsRequirements,
+  useSetRestaurantLocation,
   useUpdateDelivery,
   useUpdateHours,
   useUpdateSettings,
@@ -194,7 +196,51 @@ function LockBadge() {
 // portal — this is the owner's half of the same answer the admin console now gives.
 const DISCOVERY_RADIUS_KM = 25;
 
-function MapPlacement({ restaurant }) {
+// "Use my current location": the geocoder places a restaurant from its address, which can
+// land a street or two away. Pressed while standing in the restaurant, this saves the exact
+// spot instead — straight away, independent of the rest of the form.
+function UseMyLocationButton({ restaurantId }) {
+  const setLocation = useSetRestaurantLocation(restaurantId);
+  const [locating, setLocating] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  async function handleClick() {
+    setMessage(null);
+    setLocating(true);
+    try {
+      const pos = await getCurrentPosition();
+      await setLocation.mutateAsync(pos);
+      setMessage({
+        tone: "ok",
+        text: `Saved your exact location${pos.accuracy ? ` (accurate to about ${Math.round(pos.accuracy)} m)` : ""}.`,
+      });
+    } catch (err) {
+      setMessage({ tone: "error", text: err.message ?? "Couldn't save your location" });
+    } finally {
+      setLocating(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <Button type="button" variant="outline" size="sm" onClick={handleClick} disabled={locating}>
+        <LocateFixed />
+        {locating ? "Getting your location…" : "Use my current location"}
+      </Button>
+      <span className="text-[11px] text-muted-foreground">
+        {message ? (
+          <span className={message.tone === "error" ? "text-destructive" : "text-emerald-700"}>
+            {message.text}
+          </span>
+        ) : (
+          "Press this while you are inside the restaurant to pin its exact spot."
+        )}
+      </span>
+    </div>
+  );
+}
+
+function MapPlacement({ restaurant, restaurantId }) {
   const coordinates = restaurant?.location?.coordinates;
   const [lng, lat] = Array.isArray(coordinates) ? coordinates : [];
   const placed =
@@ -206,36 +252,41 @@ function MapPlacement({ restaurant }) {
 
   if (!placed) {
     return (
-      <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
-        <MapPinOff className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-        <p className="text-[11px] leading-relaxed text-destructive">
-          <span className="font-semibold">Not placed on the map yet.</span> Customers cannot
-          find you until this is fixed, however complete the rest of your profile is. Check
-          the street, city, state and pincode above and save again — the pincode and state
-          are what usually make the difference. If it still fails, ask support to place you
-          manually.
-        </p>
+      <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
+        <div className="flex items-start gap-2">
+          <MapPinOff className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <p className="text-[11px] leading-relaxed text-destructive">
+            <span className="font-semibold">Not placed on the map yet.</span> Customers cannot
+            find you until this is fixed, however complete the rest of your profile is. Use your
+            current location below, or check the street, city, state and pincode above and save
+            again. If it still fails, ask support to place you manually.
+          </p>
+        </div>
+        <UseMyLocationButton restaurantId={restaurantId} />
       </div>
     );
   }
 
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-brand-line bg-muted/30 px-3 py-2">
-      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-orange" />
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        <span className="font-semibold text-foreground">You are on the map.</span> Customers
-        within {DISCOVERY_RADIUS_KM} km of this point see your restaurant, closest first.
-        Your delivery radius (under Delivery) decides how far you will actually deliver —
-        beyond it you are still listed, marked as not deliverable to that address.{" "}
-        <a
-          href={`https://www.google.com/maps?q=${lat},${lng}`}
-          target="_blank"
-          rel="noreferrer"
-          className="font-semibold text-brand-orange"
-        >
-          Check the pin
-        </a>
-      </p>
+    <div className="rounded-lg border border-brand-line bg-muted/30 px-3 py-2">
+      <div className="flex items-start gap-2">
+        <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-orange" />
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <span className="font-semibold text-foreground">You are on the map.</span> Customers
+          within {DISCOVERY_RADIUS_KM} km of this point see your restaurant, closest first.
+          Your delivery radius (under Delivery) decides how far you will actually deliver —
+          beyond it you are still listed, marked as not deliverable to that address.{" "}
+          <a
+            href={`https://www.google.com/maps?q=${lat},${lng}`}
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold text-brand-orange"
+          >
+            Check the pin
+          </a>
+        </p>
+      </div>
+      <UseMyLocationButton restaurantId={restaurantId} />
     </div>
   );
 }
@@ -533,6 +584,10 @@ export default function StoreSettings() {
 
   // create-restaurant form (used when restaurantId is null)
   const [creating, setCreating] = useState(false);
+  // "Use my current location" on the create form — { lat, lng, accuracy } or null.
+  const [newPin, setNewPin] = useState(null);
+  const [pinning, setPinning] = useState(false);
+  const [pinError, setPinError] = useState("");
   const [createError, setCreateError] = useState("");
   const [createSubmitted, setCreateSubmitted] = useState(false);
   const [newRestaurant, setNewRestaurant] = useState({ name: "", address: {} });
@@ -770,10 +825,11 @@ export default function StoreSettings() {
     setCreating(true);
     setCreateError("");
     try {
-      // No coordinates sent: the server geocodes this address into the GeoJSON point
-      // that powers "restaurants near me" (services/geocode.service.js), and answers
-      // 400 ADDRESS_NOT_FOUND if the address can't be placed on the map.
+      // The owner's own pin when they used "Use my current location"; otherwise the server
+      // geocodes this address into the GeoJSON point that powers "restaurants near me"
+      // (services/geocode.service.js), and answers 400 ADDRESS_NOT_FOUND if it can't.
       await ownerApi.createRestaurant({
+        ...(newPin ? { location: { type: "Point", coordinates: [newPin.lng, newPin.lat] } } : {}),
         name: newRestaurant.name.trim(),
         address: Object.fromEntries(
           Object.entries(newRestaurant.address).map(([k, v]) => [k, v.trim()]),
@@ -858,6 +914,39 @@ export default function StoreSettings() {
                   accurate. Your restaurant goes to the Yulo admin team for review the
                   moment you submit — you can keep editing these details while you wait.
                 </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={pinning}
+                    onClick={async () => {
+                      setPinError("");
+                      setPinning(true);
+                      try {
+                        setNewPin(await getCurrentPosition());
+                      } catch (err) {
+                        setPinError(err.message);
+                      } finally {
+                        setPinning(false);
+                      }
+                    }}
+                  >
+                    <LocateFixed />
+                    {pinning ? "Getting your location…" : newPin ? "Update my location" : "Use my current location"}
+                  </Button>
+                  <span className="text-[11px] text-muted-foreground">
+                    {pinError ? (
+                      <span className="text-destructive">{pinError}</span>
+                    ) : newPin ? (
+                      <span className="text-emerald-700">
+                        Exact location captured{newPin.accuracy ? ` (about ${Math.round(newPin.accuracy)} m)` : ""}.
+                      </span>
+                    ) : (
+                      "Optional — press while inside the restaurant for an exact map pin."
+                    )}
+                  </span>
+                </div>
                 {createError && (
                   <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{createError}</p>
                 )}
@@ -1017,10 +1106,11 @@ export default function StoreSettings() {
               </div>
               <p className="text-[11px] text-muted-foreground sm:col-span-2">
                 Changing the address re-places your restaurant on the map, so customers
-                searching nearby find you at the new location.
+                searching nearby find you at the new location. A pin saved with "Use my
+                current location" stays until the address itself changes.
               </p>
               <div className="sm:col-span-2">
-                <MapPlacement restaurant={serverSettings} />
+                <MapPlacement restaurant={serverSettings} restaurantId={restaurantId} />
               </div>
             </CardContent>
           </Card>
