@@ -20,10 +20,12 @@ import {
   OFFER_LIMITS,
   PREVIEW_ISSUE_TEXT,
   expiryLabel,
+  isAtTable,
   offerBody,
   offerErrorText,
   offerValueText,
   paiseText,
+  sessionName,
   validateOfferForm,
 } from "@/lib/offerRules";
 import { cn } from "@/lib/utils";
@@ -119,7 +121,7 @@ export default function SendOfferDialog({ restaurantId, session, onClose }) {
     sending.current = true;
     try {
       await send.mutateAsync(offerBody(form, session.id));
-      toast.success(`Offer sent to ${session.displayName}`);
+      toast.success(`Offer sent to ${sessionName(session)}`);
       onClose();
     } catch (err) {
       setConfirming(false);
@@ -150,9 +152,13 @@ export default function SendOfferDialog({ restaurantId, session, onClose }) {
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 id={`${id}-title`} className="flex items-center gap-2 text-lg font-bold">
-              <Gift className="h-5 w-5 text-brand-orange" /> Send an offer to {session.displayName}
+              <Gift className="h-5 w-5 text-brand-orange" /> Send an offer to {sessionName(session)}
             </h2>
-            <p className="text-xs text-muted-foreground">Only they see it. Restaurant-funded, usable once.</p>
+            <p className="text-xs text-muted-foreground">
+              {isAtTable(session)
+                ? `Shows on their phone and comes off Table ${session.tableNumber}'s bill. Restaurant-funded, usable once.`
+                : "Only they see it. Restaurant-funded, usable once."}
+            </p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="h-5 w-5" />
@@ -300,8 +306,12 @@ export default function SendOfferDialog({ restaurantId, session, onClose }) {
 
       <ConfirmDialog
         open={confirming}
-        title={`Send ${offerValueText(terms)} to ${session.displayName}, valid ${expiryLabel(form.expiresInMinutes)}?`}
-        description={`"${form.title.trim()}" goes to their app now. It can be revoked until they use it.`}
+        title={`Send ${offerValueText(terms)} to ${sessionName(session)}, valid ${expiryLabel(form.expiresInMinutes)}?`}
+        description={
+          isAtTable(session)
+            ? `"${form.title.trim()}" shows on their phone now and comes off Table ${session.tableNumber}'s bill. It can be revoked until the bill is paid.`
+            : `"${form.title.trim()}" goes to their app now. It can be revoked until they use it.`
+        }
         icon={<Gift className="size-5" />}
         confirmLabel="Send offer"
         pendingLabel="Sending…"

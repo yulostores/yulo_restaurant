@@ -29,9 +29,14 @@ export const NOT_ELIGIBLE_TEXT = Object.freeze({
   GUEST: "Guest — not eligible",
   OPTED_OUT: "Customer turned off activity sharing",
   OFFER_OPEN: "Already has an active offer",
+  TABLE_OFFER_OPEN: "Someone at this table already has an active offer",
   DAILY_LIMIT: `Daily limit reached (${OFFER_LIMITS.perCustomerPerDay} per day)`,
   SESSION_CLOSED: "Customer has left",
 });
+
+// A diner at a table (yulo_menu's table QR) is named by their table: "Table 5 · Guest".
+export const isAtTable = (session) => session?.channel === "dine_in" && Boolean(session?.tableNumber);
+export const sessionName = (session) => (isAtTable(session) ? `Table ${session.tableNumber} · ${session.displayName}` : session?.displayName);
 
 // The preview's `issue`, in words.
 export const PREVIEW_ISSUE_TEXT = Object.freeze({

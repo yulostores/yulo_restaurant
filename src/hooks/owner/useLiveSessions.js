@@ -34,6 +34,8 @@ export const SESSION_FILTERS = Object.freeze({
   active: { label: "Active", statuses: ["active", "idle"], withCart: false },
   abandoned: { label: "Abandoned", statuses: ["abandoned"], withCart: false },
   cart: { label: "With cart", statuses: ["active", "idle", "abandoned"], withCart: true },
+  // Diners at a table, ordering from the table QR (yulo_menu).
+  tables: { label: "At tables", statuses: ["active", "idle", "abandoned"], withCart: false, channel: "dine_in" },
 });
 
 const filterOf = (key) => SESSION_FILTERS[key] ?? SESSION_FILTERS.all;
@@ -42,6 +44,7 @@ const filterOf = (key) => SESSION_FILTERS[key] ?? SESSION_FILTERS.all;
 export function matchesFilter(row, filterKey) {
   const filter = filterOf(filterKey);
   if (!filter.statuses.includes(row.status)) return false;
+  if (filter.channel && (row.channel ?? "app") !== filter.channel) return false;
   return !filter.withCart || (row.cart?.itemCount ?? 0) > 0;
 }
 

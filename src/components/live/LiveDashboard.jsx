@@ -4,12 +4,12 @@
 // API.md § Live Activity & Personal Offers.
 
 import { useEffect, useRef, useState } from "react";
-import { Gift, RefreshCw, Search, ShoppingBag } from "lucide-react";
+import { Gift, RefreshCw, Search, ShoppingBag, UtensilsCrossed } from "lucide-react";
 
 import RevokeOfferButton from "@/components/live/RevokeOfferButton";
 import SendOfferDialog from "@/components/live/SendOfferDialog";
 import { OFFER_STATUS_CHIP } from "@/components/live/OffersTab";
-import { NOT_ELIGIBLE_TEXT, offerValueText } from "@/lib/offerRules";
+import { NOT_ELIGIBLE_TEXT, isAtTable, offerValueText, sessionName } from "@/lib/offerRules";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -105,6 +105,11 @@ function SessionRowView({ row, selected, now, onSelect, onKeyDown, buttonRef }) 
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">
+              {isAtTable(row) ? (
+                <span className="mr-1.5 inline-flex items-center gap-1 rounded-full bg-[#EAF4EC] px-1.5 py-0.5 align-middle text-[11px] font-semibold text-brand-green">
+                  <UtensilsCrossed className="h-3 w-3" /> Table {row.tableNumber}
+                </span>
+              ) : null}
               {row.displayName}
               {row.pastOrderCount > 0 ? (
                 <span className="ml-2 text-xs font-medium text-brand-orange">
@@ -195,7 +200,12 @@ function SessionDetail({ restaurantId, sessionId }) {
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-bold">{session.displayName}</h2>
+            <h2 className="text-lg font-bold">{sessionName(session)}</h2>
+            {isAtTable(session) ? (
+              <p className="inline-flex items-center gap-1 text-xs font-medium text-brand-green">
+                <UtensilsCrossed className="h-3 w-3" /> Ordering from the QR at Table {session.tableNumber} — an offer comes off the table's bill
+              </p>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               {session.pastOrderCount > 0 ? `Returning · ${session.pastOrderCount} past orders · ` : "First visit · "}
               Started {formatTime(session.startedAt)} · active {timeAgo(session.lastActivityAt, now)}
@@ -258,7 +268,7 @@ function SessionDetail({ restaurantId, sessionId }) {
               <tfoot>
                 <tr className="border-t border-brand-cream/60 font-semibold">
                   <td className="pt-2" colSpan={3}>
-                    Cart total (with charges)
+                    {isAtTable(session) ? "Cart total" : "Cart total (with charges)"}
                   </td>
                   <td className="pt-2 text-right">{formatPaise(cart.totalPaise)}</td>
                 </tr>
@@ -278,9 +288,9 @@ function SessionDetail({ restaurantId, sessionId }) {
                   </span>
                   <span className="flex shrink-0 items-center gap-2">
                     <Badge variant={OFFER_STATUS_CHIP[offer.status]?.variant ?? "muted"}>
-                      {OFFER_STATUS_CHIP[offer.status]?.label ?? offer.status}
+                      {offer.status === "applied" && isAtTable(session) ? "On the bill" : OFFER_STATUS_CHIP[offer.status]?.label ?? offer.status}
                     </Badge>
-                    <RevokeOfferButton restaurantId={restaurantId} offer={offer} customerName={session.displayName} />
+                    <RevokeOfferButton restaurantId={restaurantId} offer={offer} customerName={sessionName(session)} />
                   </span>
                 </li>
               ))}

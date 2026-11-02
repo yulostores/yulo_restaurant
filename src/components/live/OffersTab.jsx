@@ -190,7 +190,10 @@ export default function OffersTab({ restaurantId }) {
                     const open = OPEN_OFFER_STATUSES.includes(offer.status);
                     return (
                       <tr key={offer.id} className="border-b border-brand-cream/40">
-                        <td className="px-4 py-2 font-semibold">{offer.customerName}</td>
+                        <td className="px-4 py-2 font-semibold">
+                          {offer.tableNumber ? `Table ${offer.tableNumber} · ` : ""}
+                          {offer.customerName}
+                        </td>
                         <td className="px-4 py-2">
                           {offer.title}
                           <span className="block text-xs text-muted-foreground">{offerValueText(offer)}</span>
@@ -201,7 +204,11 @@ export default function OffersTab({ restaurantId }) {
                         <td className="px-4 py-2 text-muted-foreground">{formatDateTime(offer.sentAt)}</td>
                         <td className="px-4 py-2 text-muted-foreground">{open ? expiresIn(offer.expiresAt, now) : "—"}</td>
                         <td className="px-4 py-2">
-                          {offer.orderId ? `#${offer.orderId.slice(-6).toUpperCase()} · ${paiseText(offer.orderTotalPaise)}` : "—"}
+                          {offer.orderId
+                            ? `#${offer.orderId.slice(-6).toUpperCase()} · ${paiseText(offer.orderTotalPaise)}`
+                            : offer.tableNumber && offer.orderTotalPaise != null
+                              ? `Table bill · ${paiseText(offer.orderTotalPaise)}`
+                              : "—"}
                         </td>
                         <td className="px-4 py-2 text-right">
                           <RevokeOfferButton restaurantId={restaurantId} offer={offer} customerName={offer.customerName} />
