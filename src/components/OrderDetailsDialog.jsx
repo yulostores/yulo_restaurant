@@ -180,7 +180,9 @@ function Timeline({ history, currentStatus }) {
   );
 }
 
-export default function OrderDetailsDialog({ order, onClose, action }) {
+// `footer` (optional): extra controls under the order, e.g. the owner's status buttons
+// (components/OwnerOrderActions.jsx) on Manage Orders.
+export default function OrderDetailsDialog({ order, onClose, action, footer }) {
   if (!order) return null;
 
   const items = order.items ?? [];
@@ -377,8 +379,9 @@ export default function OrderDetailsDialog({ order, onClose, action }) {
           </div>
         </div>
 
-        {/* Optional quick action (e.g. Kitchen Display's "Mark as Ready") — omitted by every
-            other caller of this dialog, which stays read-only on status by design. */}
+        {footer ? <div className="border-t border-brand-cream/60 px-5 py-4">{footer}</div> : null}
+
+        {/* Optional quick action (e.g. Kitchen Display's "Mark as Ready"). */}
         {action ? (
           <div className="border-t border-brand-cream/60 px-5 py-4">
             <button

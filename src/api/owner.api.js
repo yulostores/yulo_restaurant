@@ -187,6 +187,12 @@ export const ownerApi = {
   // reason: 3–200 chars, shown to the customer. The bare word "Other" is refused (400).
   rejectOrder: (rId, orderId, reason) =>
     client.patch(`/owner/${rId}/orders/${orderId}/reject`, { reason }),
+  // The kitchen / floor steps, for when the chef or waiter is busy (QR and app orders alike).
+  // newStatus: "preparing" | "ready" | "served" | "out_for_delivery" | "delivered" | "cancelled";
+  // reason (3–200 chars, shown to the customer) is required to cancel.
+  // 409 RIDER_HANDLES_DELIVERY once a rider has a delivery order (their codes move it on).
+  updateOrderStatus: (rId, orderId, newStatus, reason) =>
+    client.patch(`/owner/${rId}/orders/${orderId}/status`, { newStatus, ...(reason ? { reason } : {}) }),
 
   // Dine-in orders grouped table -> sitting -> rounds.
   // scope: "active" (default) | "today" | "all"

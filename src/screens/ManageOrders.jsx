@@ -11,10 +11,10 @@
 //   All orders — GET /api/owner/:rId/orders. The flat, paginated audit list, now carrying
 //               the table and the staff member on every row.
 //
-// Status is read-only here by design: accepting or rejecting a new customer order happens
-// on Incoming Orders (/incoming-orders), and later transitions belong to the chef KDS and
-// the waiter portal (which owns the "served" step). This screen reflects them — it does
-// not drive them.
+// Accepting or rejecting a new customer order happens on Incoming Orders (/incoming-orders).
+// After that the chef KDS and the waiter portal move orders on — and so can the owner, from
+// here, when they are busy: each row carries its next step, and the order details add the
+// rest plus Cancel (components/OwnerOrderActions.jsx). QR and customer-app orders alike.
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -38,6 +38,7 @@ import {
   TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import RiderPickupOtp from "@/components/RiderPickupOtp";
+import OwnerOrderActions, { ownerCanCancel, ownerSteps, riderHasIt } from "@/components/OwnerOrderActions";
 import { cn } from "@/lib/utils";
 
 // The order lifecycle exactly as the API documents it, plus the waiter-owned 'served'.
@@ -78,6 +79,7 @@ function itemCount(items = []) {
 // ── By-table view ────────────────────────────────────────────────────
 
 function RoundRow({ order, onView }) {
+  const { restaurantId } = useOwnerAuth();
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-brand-cream/50 px-4 py-3 last:border-0 sm:flex-nowrap">
       <div className="flex w-[92px] shrink-0 flex-col">
@@ -106,6 +108,8 @@ function RoundRow({ order, onView }) {
       <span className="w-[76px] shrink-0 text-right text-sm font-semibold">
         {formatPrice(order.subtotal)}
       </span>
+
+      <OwnerOrderActions order={order} restaurantId={restaurantId} code={orderCode(order)} compact className="shrink-0" />
 
       <Button variant="outline" size="sm" className="shrink-0" onClick={() => onView(order)}>
         View details
@@ -256,6 +260,7 @@ function TableGroup({ group, expanded, onToggle, onView, onViewBill }) {
 // ── Flat view ────────────────────────────────────────────────────────
 
 function OrderRow({ order, onView, onViewBill }) {
+  const { restaurantId } = useOwnerAuth();
   return (
     <TableRow>
       <TableCell className="font-semibold">{orderCode(order)}</TableCell>
@@ -289,6 +294,7 @@ function OrderRow({ order, onView, onViewBill }) {
       <TableCell className="text-right font-semibold">{formatPrice(order.subtotal)}</TableCell>
       <TableCell className="text-right">
         <div className="flex justify-end gap-1">
+          <OwnerOrderActions order={order} restaurantId={restaurantId} code={orderCode(order)} compact />
           <Button variant="outline" size="sm" onClick={() => onView(order)}>
             Details
           </Button>
@@ -592,7 +598,20 @@ export default function ManageOrders() {
         </>
       )}
 
-      <OrderDetailsDialog order={detailOrder} onClose={() => setDetail(null)} />
+      <OrderDetailsDialog
+        order={detailOrder}
+        onClose={() => setDetail(null)}
+        footer={
+          detailOrder && (ownerSteps(detailOrder).length || ownerCanCancel(detailOrder) || riderHasIt(detailOrder)) ? (
+            <OwnerOrderActions
+              order={detailOrder}
+              restaurantId={restaurantId}
+              code={orderCode(detailOrder)}
+              onUpdated={(updated) => setDetail((current) => (current ? { ...current, ...updated } : current))}
+            />
+          ) : null
+        }
+      />
     </DashboardLayout>
   );
 }

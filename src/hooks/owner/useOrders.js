@@ -1,9 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ownerApi } from "@/api/owner.api";
 
-// Read-only order lists. The owner's one write — accepting or rejecting a new customer
-// order — lives in ./useOrderApproval.js; later transitions belong to the kitchen (staff)
-// and waiter endpoints, and payment is closed out by the waiter's mark-paid call.
+// Order lists, and the owner's own kitchen / floor steps (useUpdateOrderStatus below).
+// Accepting or rejecting a new customer order lives in ./useOrderApproval.js.
 export const orderKeys = {
   all:     (rId)       => ["owner-orders", rId],
   list:    (rId, p={}) => ["owner-orders", rId, "list", p],
@@ -60,5 +59,16 @@ export function useOrdersByTable(restaurantId, params = {}) {
     // here within seconds, not on the next full page load.
     staleTime: 5_000,
     refetchInterval: 15_000,
+  });
+}
+
+// The owner moving an order on themselves — preparing, ready, served, out for delivery,
+// delivered or cancelled — when the chef or waiter is busy. Every order list refreshes after.
+export function useUpdateOrderStatus(restaurantId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ orderId, newStatus, reason }) =>
+      ownerApi.updateOrderStatus(restaurantId, orderId, newStatus, reason).then((r) => r.data.data.order),
+    onSuccess: () => qc.invalidateQueries({ queryKey: orderKeys.all(restaurantId) }),
   });
 }
