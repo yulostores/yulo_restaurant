@@ -11,7 +11,7 @@ import { Search, XCircle } from "lucide-react";
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { useOwnerOrdersPage } from "@/hooks/owner/useOrders";
 import DashboardLayout from "@/components/DashboardLayout";
-import { cancelledByLabel } from "@/components/OrderDetailsDialog";
+import { cancelledByLabel, ownerCancellationReason } from "@/components/OrderDetailsDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -75,7 +75,7 @@ export default function Cancellations() {
     return orders.filter((o) =>
       String(o._id).toLowerCase().includes(term) ||
       (o.items ?? []).some((i) => (i.name ?? "").toLowerCase().includes(term)) ||
-      (o.cancellationReason ?? "").toLowerCase().includes(term),
+      (ownerCancellationReason(o) ?? "").toLowerCase().includes(term),
     );
   }, [orders, search]);
 
@@ -163,9 +163,9 @@ export default function Cancellations() {
                     </TableCell>
                     <TableCell className="max-w-[300px]">
                       <p className="text-sm font-medium">{cancelledByLabel(o)}</p>
-                      {o.cancellationReason ? (
-                        <p className="truncate text-xs text-muted-foreground" title={o.cancellationReason}>
-                          {o.cancellationReason}
+                      {ownerCancellationReason(o) ? (
+                        <p className="truncate text-xs text-muted-foreground" title={ownerCancellationReason(o)}>
+                          {ownerCancellationReason(o)}
                         </p>
                       ) : null}
                       {o.refundStatus === "pending" ? (

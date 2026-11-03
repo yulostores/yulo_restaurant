@@ -206,8 +206,10 @@ export const ownerApi = {
   getBill: (rId, billId) => client.get(`/owner/${rId}/bills/${billId}`),
   // Settle a dine-in bill paid at the counter. method: "cash" | "upi" | "card".
   // 409 PAID_ONLINE (the guest is paying online), BILL_ALREADY_PAID, ORDERS_PENDING.
-  markBillPaid: (rId, billId, method) =>
-    client.post(`/owner/${rId}/bills/${billId}/mark-paid`, { method }),
+  // `expectedTotal` is the total on screen: if a round was added since, the server re-prices
+  // and answers 409 BILL_TOTAL_CHANGED instead of settling an amount nobody confirmed.
+  markBillPaid: (rId, billId, method, expectedTotal) =>
+    client.post(`/owner/${rId}/bills/${billId}/mark-paid`, { method, expectedTotal }),
   // Release a bill held for a guest's abandoned online payment. 409 PAYMENT_IN_PROGRESS
   // while that payment is going through.
   releaseBillPayment: (rId, billId) =>

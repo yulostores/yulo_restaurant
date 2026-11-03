@@ -46,6 +46,7 @@ const PERIODS = [
 const BREAKDOWN_COLORS = {
   "Dine-in":   "#D9480F",
   Delivery:    "#F2A65A",
+  Takeaway:    "#7A4B2A",
   Cancelled:   "#B11226",
 };
 
@@ -133,6 +134,8 @@ export default function OwnerDashboard() {
     const raw = [
       { label: "Dine-in",   value: Number(kpis.dineIn) || 0 },
       { label: "Delivery",  value: Number(kpis.delivery) || 0 },
+      // Takeaway was left out, so the donut's total disagreed with the Total Orders card.
+      { label: "Takeaway",  value: Number(kpis.takeaway) || 0 },
       { label: "Cancelled", value: Number(kpis.cancelledOrders) || 0 },
     ].filter((s) => s.value > 0);
     const total = raw.reduce((sum, s) => sum + s.value, 0);
@@ -188,7 +191,12 @@ export default function OwnerDashboard() {
             <StatCard
               title="Total Orders"
               value={kpis?.orders ?? 0}
-              caption={`${kpis?.dineIn ?? 0} dine-in · ${kpis?.delivery ?? 0} delivery`}
+              caption={[
+                `${kpis?.dineIn ?? 0} dine-in`,
+                `${kpis?.delivery ?? 0} delivery`,
+                ...(kpis?.takeaway ? [`${kpis.takeaway} takeaway`] : []),
+                ...(kpis?.cancelledOrders ? [`${kpis.cancelledOrders} cancelled not counted`] : []),
+              ].join(" · ")}
             />
             <StatCard
               title="Revenue"
@@ -202,9 +210,9 @@ export default function OwnerDashboard() {
             />
             <StatCard
               title="Average Rating"
-              value={restaurant?.avgRating ?? "—"}
-              caption={`${restaurant?.totalRatings ?? 0} ratings`}
-              rating={restaurant?.avgRating ?? 0}
+              value={restaurant?.totalRatings ? Number(restaurant.avgRating ?? 0).toFixed(1) : "—"}
+              caption={restaurant?.totalRatings === 1 ? "1 rating" : `${restaurant?.totalRatings ?? 0} ratings`}
+              rating={restaurant?.totalRatings ? restaurant.avgRating ?? 0 : 0}
             />
           </>
         )}
@@ -222,7 +230,7 @@ export default function OwnerDashboard() {
               <div className="flex h-[240px] animate-pulse items-center justify-center text-sm text-muted-foreground">
                 Loading…
               </div>
-            ) : salesRows.length === 0 ? (
+            ) : salesRows.every((r) => !r.revenue) ? (
               <div className="flex h-[240px] items-center justify-center text-sm text-muted-foreground">
                 No sales in this period.
               </div>
@@ -239,7 +247,8 @@ export default function OwnerDashboard() {
                   <YAxis
                     tickLine={false} axisLine={false}
                     tick={{ fontSize: 11, fill: "#8a8a8a" }}
-                    tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)}
+                    // One decimal, so 1,050 and 1,400 don't both read "1k".
+                    tickFormatter={(v) => (v >= 1000 ? `${Number((v / 1000).toFixed(1))}k` : v)}
                   />
                   <Tooltip
                     cursor={{ fill: "rgba(217,72,15,0.06)" }}
@@ -294,7 +303,7 @@ export default function OwnerDashboard() {
                         <strong className="text-2xl font-bold">
                           {breakdown.reduce((s, i) => s + i.value, 0)}
                         </strong>
-                        <span className="text-[11px] text-muted-foreground">Total Orders</span>
+                        <span className="text-[11px] text-muted-foreground">Orders placed</span>
                       </>
                     )}
                   </div>

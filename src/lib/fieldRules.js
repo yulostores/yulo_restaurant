@@ -67,6 +67,23 @@ export function fieldError(field, rawValue) {
     return null;
   }
 
+  if (field.type === "tags") {
+    if (!Array.isArray(value)) return `${field.label} must be a list`;
+    if (field.maxItems && value.length > field.maxItems) return `${field.label}: at most ${field.maxItems}`;
+    for (const item of value) {
+      if (typeof item !== "string" || !item.trim()) return `${field.label} must be text`;
+      if (field.itemMaxLength && item.trim().length > field.itemMaxLength) {
+        return `Each of ${field.label.toLowerCase()} must be at most ${field.itemMaxLength} characters`;
+      }
+    }
+    return null;
+  }
+
+  if (field.type === "date") {
+    const d = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(d.getTime()) ? `Enter a valid date for ${field.label}` : null;
+  }
+
   if (typeof value !== "string") return null;
 
   if (field.minLength && value.length < field.minLength) {

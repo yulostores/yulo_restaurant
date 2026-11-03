@@ -42,9 +42,19 @@ function useBillMutation(restaurantId, call) {
 }
 
 export function useMarkBillPaid(restaurantId) {
-  return useBillMutation(restaurantId, ({ billId, method }) =>
-    ownerApi.markBillPaid(restaurantId, billId, method),
+  const qc = useQueryClient();
+  const mutation = useBillMutation(restaurantId, ({ billId, method, expectedTotal }) =>
+    ownerApi.markBillPaid(restaurantId, billId, method, expectedTotal),
   );
+  // A refused settle because the bill moved on: fetch it again so the new total is on screen.
+  return {
+    ...mutation,
+    mutateAsync: (vars) =>
+      mutation.mutateAsync(vars).catch((err) => {
+        if (err?.code === "BILL_TOTAL_CHANGED") qc.invalidateQueries({ queryKey: ["bills", restaurantId] });
+        throw err;
+      }),
+  };
 }
 
 export function useReleaseBillPayment(restaurantId) {

@@ -252,7 +252,7 @@ export default function ManagerTables() {
             ? `Delete table ${confirming.table.identifier}?`
             : `Take table ${confirming?.table.identifier} out of service?`
         }
-        description={`Table ${confirming?.table.identifier} disappears from your floor plan and its QR code stops working for guests. It can't be brought back from this screen.`}
+        description={`Table ${confirming?.table.identifier} disappears from your floor plan and its QR code stops working for guests. To bring it back, add the same table number again — its old QR code then works again.`}
         confirmLabel={confirming?.kind === "delete" ? "Delete table" : "Deactivate table"}
         pendingLabel={confirming?.kind === "delete" ? "Deleting…" : "Deactivating…"}
         pending={confirming?.kind === "delete" ? deleteTable.isPending : updateTable.isPending}

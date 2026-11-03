@@ -185,10 +185,11 @@ export default function OwnerLoginPage() {
             <form className="space-y-4" onSubmit={handleSubmit}>
               {mode === "signup" && (
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
+                  <label htmlFor="owner-login-name" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
                     Full Name
                   </label>
                   <input
+                    id="owner-login-name"
                     name="name"
                     value={form.name}
                     onChange={handleChange}
@@ -204,10 +205,11 @@ export default function OwnerLoginPage() {
 
               {mode === "signup" && (
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
+                  <label htmlFor="owner-login-phone" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
                     Phone (optional)
                   </label>
                   <input
+                    id="owner-login-phone"
                     name="phone"
                     value={form.phone}
                     onChange={handleChange}
@@ -221,11 +223,12 @@ export default function OwnerLoginPage() {
               )}
 
               <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
+                <label htmlFor="owner-login-email" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
                   Email
                 </label>
                 <input
-                  name="email"
+                  id="owner-login-email"
+                    name="email"
                   type="email"
                   value={form.email}
                   onChange={handleChange}
@@ -236,11 +239,12 @@ export default function OwnerLoginPage() {
               </div>
 
               <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
+                <label htmlFor="owner-login-password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
                   Password
                 </label>
                 <div className="relative">
                   <input
+                    id="owner-login-password"
                     name="password"
                     type={showPw ? "text" : "password"}
                     value={form.password}

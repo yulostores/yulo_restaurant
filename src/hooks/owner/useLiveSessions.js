@@ -128,9 +128,12 @@ export function patchDetailOffer(detail, update) {
 // A 404 means the feature is off for this restaurant — not worth retrying.
 const retryUnless404 = (count, err) => err?.status !== 404 && count < 2;
 
+// Polls while the socket is down — but not once the server has said the feature is off
+// (404): that answer won't change mid-visit, and the page kept asking every interval.
 const usePollingWhileOffline = () => {
   const state = useOwnerSocketState();
-  return state === SOCKET_STATES.CONNECTED ? false : POLL_MS;
+  if (state === SOCKET_STATES.CONNECTED) return false;
+  return (query) => (query.state.error?.status === 404 ? false : POLL_MS);
 };
 
 /** `{ sessions, summary }` for a filter key (see SESSION_FILTERS). */

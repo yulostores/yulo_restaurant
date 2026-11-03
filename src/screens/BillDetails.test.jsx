@@ -60,7 +60,7 @@ describe("BillDetails mark paid", () => {
     screen.getByRole("alertdialog", { name: "Confirm payment received" });
 
     await user.click(screen.getByRole("button", { name: "Yes, payment received" }));
-    expect(m.markPaid.mutateAsync).toHaveBeenCalledWith({ billId: "b1", method: "cash" });
+    expect(m.markPaid.mutateAsync).toHaveBeenCalledWith({ billId: "b1", method: "cash", expectedTotal: 840 });
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 

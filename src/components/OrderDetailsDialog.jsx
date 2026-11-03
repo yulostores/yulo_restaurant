@@ -122,6 +122,21 @@ export function cancelledByLabel(order) {
   return CANCELLED_BY[order?.cancelledBy] ?? "Cancelled";
 }
 
+// The reason as the restaurant should read it. A customer's own cancellation is stored in
+// the customer's voice ("Cancelled by you …", which their app shows them), so on these
+// screens it read as if the restaurant had cancelled. "Cancelled by the customer" is already
+// the label above it; only what the reason adds is kept.
+export function ownerCancellationReason(order) {
+  const reason = order?.cancellationReason;
+  if (!reason) return null;
+  if (order.cancelledBy === "customer" && /^Cancelled by you\b/i.test(reason)) {
+    const rest = reason.replace(/^Cancelled by you\s*/i, "").replace(/^[—–-]\s*/, "");
+    if (!rest) return null;
+    return rest.replace(/^after/i, "After").replace(/no refund$/i, "no refund to the customer");
+  }
+  return reason;
+}
+
 export function orderCode(order) {
   return `#${String(order?._id ?? "").slice(-6).toUpperCase()}`;
 }
@@ -241,7 +256,7 @@ export default function OrderDetailsDialog({ order, onClose, action, footer }) {
           {order.status === "cancelled" ? (
             <div className="mb-4 rounded-xl bg-[#FCE9E4] px-3.5 py-2.5 text-sm text-brand-maroon">
               <p className="font-semibold">{cancelledByLabel(order)}</p>
-              {order.cancellationReason ? <p>Reason: {order.cancellationReason}</p> : null}
+              {ownerCancellationReason(order) ? <p>Reason: {ownerCancellationReason(order)}</p> : null}
               {order.refundStatus === "pending" ? (
                 <p className="mt-1 font-semibold">Paid online — refund pending.</p>
               ) : null}

@@ -40,6 +40,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION_MAX = 300;
+// The server's limits (OFFER_LIMITS in controllers/owner/discount.controller.js).
+const NAME_MAX = 100;
+const CODE_MAX = 30;
+const AMOUNT_MAX = 100000;
 
 // Input sanitisers, applied as the owner types so a bad character never lands in state.
 // A number of up to 3 digits, decimals allowed (e.g. a percentage: 5, 12.5, 100).
@@ -69,7 +73,19 @@ const APPLICABLE = [
 ];
 
 // The API models exactly two states: draft and active.
-const STATUS_VARIANT = { active: "ok", draft: "muted" };
+const STATUS_VARIANT = { active: "ok", draft: "muted", scheduled: "info", expired: "muted" };
+
+// What the owner should read in the Status column. "active" only means published: an offer
+// starting next week showed ACTIVE today, and one whose end date had passed still did too.
+export function offerStatus(offer, at = Date.now()) {
+  if (offer.status === "draft") return { key: "draft", label: "Draft" };
+  if (offer.status === "expired") return { key: "expired", label: "Ended" };
+  const start = offer.startDate ? new Date(offer.startDate).getTime() : null;
+  const end = offer.endDate ? new Date(offer.endDate).getTime() : null;
+  if (end !== null && end < at) return { key: "expired", label: "Ended" };
+  if (start !== null && start > at) return { key: "scheduled", label: "Scheduled" };
+  return { key: "active", label: "Active" };
+}
 
 const EMPTY = {
   name: "",
@@ -119,6 +135,7 @@ function validityLabel(offer) {
 const FIELD_LABELS = {
   offerName:              "Offer name",
   code:                   "Coupon code",
+  description:            "Description",
   percentage:             "Discount (%)",
   flatAmount:             "Discount amount",
   freeItemId:             "Free item",
@@ -276,13 +293,14 @@ function ImageDropzone({ preview, hasFile, onSelect, onClear, onError }) {
   );
 }
 
-function RupeeInput({ value, onChange, placeholder }) {
+function RupeeInput({ id, value, onChange, placeholder }) {
   return (
     <div className="relative">
       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
         ₹
       </span>
       <Input
+        id={id}
         inputMode="numeric"
         maxLength={9}
         value={value}
@@ -398,7 +416,9 @@ export default function Offers() {
     const payload = {
       offerName:          f.name,
       type:               f.discountType,
-      code:               f.code || undefined,
+      code:               f.code.trim() || undefined,
+      // Sent (and stored) now — it used to be typed, previewed and silently dropped.
+      description:        f.description.trim(),
       applicableTo:       f.applicableFor,
       minimumOrderValue:  f.minOrder ? Number(f.minOrder) : 0,
       // Both dates arrive from <input type="date"> as bare YYYY-MM-DD, i.e. midnight. Sent
@@ -449,7 +469,12 @@ export default function Offers() {
   // incomplete form is answered here instead of coming back as a bare 400.
   function validate(f) {
     if (!f.name.trim()) return "Add an offer name";
+    if (f.name.trim().length > NAME_MAX) return `Offer name must be at most ${NAME_MAX} characters`;
     if (f.type === "coupon" && !f.code.trim()) return "Add a coupon code";
+    if (f.type === "coupon" && !/^[A-Za-z0-9_-]+$/.test(f.code.trim()))
+      return "Coupon codes use only letters, numbers, - and _";
+    if (f.type === "coupon" && f.code.trim().length > CODE_MAX)
+      return `Coupon code must be at most ${CODE_MAX} characters`;
 
     const raw = String(f.discountValue ?? "").trim();
     const value = Number(raw);
@@ -461,7 +486,10 @@ export default function Offers() {
     if (f.discountType === "flat_amount" || f.discountType === "tablewise") {
       if (!raw) return "Enter a discount amount";
       if (!Number.isFinite(value) || value <= 0) return "Discount amount must be more than ₹0";
+      if (value > AMOUNT_MAX) return `Discount amount can be at most ₹${AMOUNT_MAX.toLocaleString("en-IN")}`;
     }
+    if (f.minOrder && Number(f.minOrder) > AMOUNT_MAX)
+      return `Minimum order value can be at most ₹${AMOUNT_MAX.toLocaleString("en-IN")}`;
     if (f.discountType === "flat_amount" && f.itemApplicability === "categories" && !f.applicableCategories.length)
       return "Pick at least one category";
     if (f.discountType === "flat_amount" && f.itemApplicability === "specific_items" && !f.applicableItems.length)
@@ -535,6 +563,7 @@ export default function Offers() {
       ...EMPTY,
       name:          offer.offerName ?? "",
       code:          offer.code ?? "",
+      description:   offer.description ?? "",
       imageUrl:      offer.image ?? "",
       type:          offer.code ? "coupon" : "auto",
       discountType:  offer.type ?? "percentage",
@@ -677,8 +706,8 @@ export default function Offers() {
           <CardContent className="grid grid-cols-1 gap-5 p-6 sm:grid-cols-2">
             {/* Offer Name — full width */}
             <div className="col-span-full space-y-1.5">
-              <label className="text-sm font-medium text-[#24190f]">Offer Name</label>
-              <Input
+              <label htmlFor="offer-offer-name" className="text-sm font-medium text-[#24190f]">Offer Name</label>
+              <Input id="offer-offer-name"
                 value={editForm.name}
                 onChange={(e) => setEF({ name: e.target.value })}
                 placeholder="Welcome Drink"
@@ -687,9 +716,9 @@ export default function Offers() {
 
             {/* Reward Type */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-[#24190f]">Reward Type</label>
+              <label htmlFor="offer-reward-type" className="text-sm font-medium text-[#24190f]">Reward Type</label>
               <Select value={editForm.discountType} onValueChange={(v) => setEF({ discountType: v })}>
-                <SelectTrigger className="focus:ring-0 focus:ring-offset-0">
+                <SelectTrigger id="offer-reward-type" className="focus:ring-0 focus:ring-offset-0">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -702,8 +731,8 @@ export default function Offers() {
 
             {/* Minimum Order Value */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-[#24190f]">Minimum Order Value</label>
-              <RupeeInput
+              <label htmlFor="offer2-minimum-order-value" className="text-sm font-medium text-[#24190f]">Minimum Order Value</label>
+              <RupeeInput id="offer2-minimum-order-value"
                 value={editForm.minOrder}
                 onChange={(e) => setEF({ minOrder: e.target.value })}
                 placeholder="300"
@@ -712,8 +741,8 @@ export default function Offers() {
 
             {/* Start Date */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-[#24190f]">Start Date</label>
-              <Input
+              <label htmlFor="offer-start-date" className="text-sm font-medium text-[#24190f]">Start Date</label>
+              <Input id="offer-start-date"
                 type="date"
                 value={editForm.validFrom}
                 {...YEAR_BOUNDS}
@@ -723,8 +752,8 @@ export default function Offers() {
 
             {/* End Date */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-[#24190f]">End Date</label>
-              <Input
+              <label htmlFor="offer-end-date" className="text-sm font-medium text-[#24190f]">End Date</label>
+              <Input id="offer-end-date"
                 type="date"
                 value={editForm.validTo}
                 {...YEAR_BOUNDS}
@@ -747,10 +776,10 @@ export default function Offers() {
             {/* Description — full width */}
             <div className="col-span-full space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-[#24190f]">Description</label>
+                <label htmlFor="offer-description" className="text-sm font-medium text-[#24190f]">Description</label>
                 <span className="text-xs text-muted-foreground">{editForm.description.length}/{DESCRIPTION_MAX}</span>
               </div>
-              <Textarea
+              <Textarea id="offer-description"
                 value={editForm.description}
                 onChange={(e) => setEF({ description: e.target.value.slice(0, DESCRIPTION_MAX) })}
                 maxLength={DESCRIPTION_MAX}
@@ -833,8 +862,8 @@ export default function Offers() {
               </div>
 
               <div className="space-y-1.5">
-                <Label>Offer Name</Label>
-                <Input
+                <Label htmlFor="offer-offer-name-2">Offer Name</Label>
+                <Input id="offer-offer-name-2"
                   value={form.name}
                   onChange={(e) => set({ name: e.target.value })}
                   placeholder="Summer Sundae Special"
@@ -843,9 +872,9 @@ export default function Offers() {
 
               {form.type === "coupon" ? (
                 <div className="space-y-1.5">
-                  <Label>Coupon Code</Label>
+                  <Label htmlFor="offer-coupon-code">Coupon Code</Label>
                   <div className="relative">
-                    <Input
+                    <Input id="offer-coupon-code"
                       value={form.code}
                       onChange={(e) => set({ code: e.target.value.toUpperCase() })}
                       placeholder="ICECREAMFREE"
@@ -877,10 +906,10 @@ export default function Offers() {
 
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <Label>Description</Label>
+                  <Label htmlFor="offer-description-2">Description</Label>
                   <span className="text-xs text-muted-foreground">{form.description.length}/{DESCRIPTION_MAX}</span>
                 </div>
-                <Textarea
+                <Textarea id="offer-description-2"
                   value={form.description}
                   onChange={(e) => set({ description: e.target.value.slice(0, DESCRIPTION_MAX) })}
                   maxLength={DESCRIPTION_MAX}
@@ -910,8 +939,8 @@ export default function Offers() {
               {form.discountType === "percentage" && (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label>Discount (%)</Label>
-                    <Input
+                    <Label htmlFor="offer-discount">Discount (%)</Label>
+                    <Input id="offer-discount"
                       inputMode="decimal"
                       maxLength={7}
                       value={form.discountValue}
@@ -920,8 +949,8 @@ export default function Offers() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Minimum Order Value</Label>
-                    <RupeeInput
+                    <Label htmlFor="offer2-minimum-order-value-2">Minimum Order Value</Label>
+                    <RupeeInput id="offer2-minimum-order-value-2"
                       value={form.minOrder}
                       onChange={(e) => set({ minOrder: e.target.value })}
                       placeholder="300"
@@ -934,28 +963,28 @@ export default function Offers() {
               {form.discountType === "flat_amount" && (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label>Offer Name</Label>
-                    <Input
+                    <Label htmlFor="offer-offer-name-3">Offer Name</Label>
+                    <Input id="offer-offer-name-3"
                       value={form.discountName}
                       onChange={(e) => set({ discountName: e.target.value })}
                       placeholder="₹ 100 OFF Weekend Deal"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Discount amount</Label>
-                    <RupeeInput
+                    <Label htmlFor="offer2-discount-amount">Discount amount</Label>
+                    <RupeeInput id="offer2-discount-amount"
                       value={form.discountValue}
                       onChange={(e) => set({ discountValue: e.target.value })}
                       placeholder="100"
                     />
                   </div>
                   <div className="col-span-full space-y-1.5">
-                    <Label>Item Applicability</Label>
+                    <Label htmlFor="offer-item-applicability">Item Applicability</Label>
                     <Select
                       value={form.itemApplicability}
                       onValueChange={(v) => set({ itemApplicability: v })}
                     >
-                      <SelectTrigger className="focus:ring-0 focus:ring-offset-0">
+                      <SelectTrigger id="offer-item-applicability" className="focus:ring-0 focus:ring-offset-0">
                         <SelectValue placeholder="Select applicability" />
                       </SelectTrigger>
                       <SelectContent>
@@ -999,16 +1028,16 @@ export default function Offers() {
               {form.discountType === "free_item" && (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label>Select Item</Label>
-                    <Input
+                    <Label htmlFor="offer-select-item">Select Item</Label>
+                    <Input id="offer-select-item"
                       value={form.item}
                       onChange={(e) => set({ item: e.target.value })}
                       placeholder="Gourmet Sundae"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Minimum Order Value</Label>
-                    <RupeeInput
+                    <Label htmlFor="offer2-minimum-order-value-3">Minimum Order Value</Label>
+                    <RupeeInput id="offer2-minimum-order-value-3"
                       value={form.minOrder}
                       onChange={(e) => set({ minOrder: e.target.value })}
                       placeholder="30"
@@ -1021,24 +1050,24 @@ export default function Offers() {
               {form.discountType === "tablewise" && (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label>Offer Name</Label>
-                    <Input
+                    <Label htmlFor="offer-offer-name-4">Offer Name</Label>
+                    <Input id="offer-offer-name-4"
                       value={form.discountName}
                       onChange={(e) => set({ discountName: e.target.value })}
                       placeholder="₹ 100 OFF Weekend Deal"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Discount amount</Label>
-                    <RupeeInput
+                    <Label htmlFor="offer2-discount-amount-2">Discount amount</Label>
+                    <RupeeInput id="offer2-discount-amount-2"
                       value={form.discountValue}
                       onChange={(e) => set({ discountValue: e.target.value })}
                       placeholder="100"
                     />
                   </div>
                   <div className="col-span-full space-y-1.5">
-                    <Label>Table Number(s)</Label>
-                    <Input
+                    <Label htmlFor="offer-table-number-s">Table Number(s)</Label>
+                    <Input id="offer-table-number-s"
                       value={form.tableNumbers}
                       onChange={(e) => set({ tableNumbers: e.target.value })}
                       placeholder="EX: 4, 5, 6, 7"
@@ -1051,8 +1080,8 @@ export default function Offers() {
                 <Label>Validity</Label>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">Start Date</Label>
-                    <Input
+                    <Label htmlFor="offer-start-date-2" className="text-xs text-muted-foreground">Start Date</Label>
+                    <Input id="offer-start-date-2"
                       type="date"
                       value={form.validFrom}
                       {...YEAR_BOUNDS}
@@ -1060,8 +1089,8 @@ export default function Offers() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">End Date</Label>
-                    <Input
+                    <Label htmlFor="offer-end-date-2" className="text-xs text-muted-foreground">End Date</Label>
+                    <Input id="offer-end-date-2"
                       type="date"
                       value={form.validTo}
                       {...YEAR_BOUNDS}
@@ -1259,8 +1288,8 @@ export default function Offers() {
                   <TableCell className="font-medium">{discountLabel(offer)}</TableCell>
                   <TableCell className="text-muted-foreground">{validityLabel(offer)}</TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[offer.status] ?? "muted"} className="uppercase">
-                      {offer.status}
+                    <Badge variant={STATUS_VARIANT[offerStatus(offer).key] ?? "muted"} className="uppercase">
+                      {offerStatus(offer).label}
                     </Badge>
                   </TableCell>
                   <TableCell className="pr-6">

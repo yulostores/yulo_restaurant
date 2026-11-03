@@ -163,7 +163,11 @@ describe("polling fallback", () => {
     api.listLiveSessions = vi.fn(async () => ({ data: { data: sessionsPage([sessionRow()]) } }));
   });
 
-  const intervalOf = (filter) => qc.getQueryCache().find({ queryKey: liveKeys.sessions(R, filter) }).options.refetchInterval;
+  const intervalOf = (filter) => {
+    const query = qc.getQueryCache().find({ queryKey: liveKeys.sessions(R, filter) });
+    const interval = query.options.refetchInterval;
+    return typeof interval === "function" ? interval(query) : interval;
+  };
 
   it("polls every 30 s while the socket is down, not while it is live", async () => {
     socketState.value = "reconnecting";
@@ -177,5 +181,16 @@ describe("polling fallback", () => {
     await waitFor(() => expect(live.result.current.isSuccess).toBe(true));
     expect(intervalOf("active")).toBe(false);
     expect(api.listLiveSessions).toHaveBeenLastCalledWith(R, { status: "active,idle", limit: 50 });
+  });
+
+  it("stops polling once the server says the feature is off (404)", async () => {
+    socketState.value = "reconnecting";
+    api.listLiveSessions = vi.fn(async () => {
+      throw Object.assign(new Error("Not found"), { status: 404 });
+    });
+    const off = renderHook(() => useLiveSessions(R, "all"), { wrapper });
+    await waitFor(() => expect(off.result.current.isError).toBe(true));
+    expect(intervalOf("all")).toBe(false);
+    expect(api.listLiveSessions).toHaveBeenCalledTimes(1);
   });
 });

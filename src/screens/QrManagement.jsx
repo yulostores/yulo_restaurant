@@ -225,10 +225,11 @@ export default function QrManagement() {
             <CardContent className="p-5">
               <form onSubmit={generate} className="space-y-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Label htmlFor="qr-table-number" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Table Number / Identifier
                   </Label>
                   <Input
+                    id="qr-table-number"
                     value={tableNumber}
                     onChange={(e) => setTableNumber(e.target.value)}
                     placeholder="e.g. 14"

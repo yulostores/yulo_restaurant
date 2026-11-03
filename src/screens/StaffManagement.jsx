@@ -206,8 +206,8 @@ export default function StaffManagement() {
             className={`grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 ${canManage ? "" : "opacity-60"}`}
           >
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Name *</label>
-              <input
+              <label htmlFor="staff-new-name" className="text-sm font-medium">Name *</label>
+              <input id="staff-new-name"
                 name="name"
                 value={form.name}
                 onChange={handleChange}
@@ -219,8 +219,8 @@ export default function StaffManagement() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Role *</label>
-              <select
+              <label htmlFor="staff-new-role" className="text-sm font-medium">Role *</label>
+              <select id="staff-new-role"
                 name="role"
                 value={form.role}
                 onChange={handleChange}
@@ -247,8 +247,8 @@ export default function StaffManagement() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Email (optional)</label>
-              <input
+              <label htmlFor="staff-new-email-optional" className="text-sm font-medium">Email (optional)</label>
+              <input id="staff-new-email-optional"
                 name="email"
                 type="email"
                 value={form.email}

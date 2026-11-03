@@ -2,7 +2,8 @@
 // the shared DashboardLayout). Built with shadcn form primitives + Tailwind.
 // Data from the mock layer: GET /restaurant_owner/menu-management.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   ImagePlus,
   Pencil,
@@ -48,15 +49,17 @@ import { cn } from "@/lib/utils";
 import { useObjectUrl } from "@/lib/useObjectUrl";
 
 // A ₹-prefixed number input.
-function RupeeInput({ value, defaultValue, onChange, className }) {
+function RupeeInput({ id, value, defaultValue, onChange, className, placeholder }) {
   return (
     <div className="relative">
       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
         ₹
       </span>
       <Input
+        id={id}
         inputMode="numeric"
         maxLength={9}
+        placeholder={placeholder}
         value={value}
         defaultValue={defaultValue}
         // Whole rupees only: strip anything that isn't a digit as it is typed.
@@ -142,6 +145,7 @@ export default function MenuManagement() {
   const previewUrl = pickedUrl ?? item.image ?? null;
   const [statusMsg, setStatusMsg]       = useState("");
   const [newCatName, setNewCatName]     = useState("");
+  const [newCatError, setNewCatError]   = useState("");
   const [showNewCat, setShowNewCat]     = useState(false);
   const [listSearch, setListSearch]     = useState("");
   const [listCategory, setListCategory] = useState("all");
@@ -255,6 +259,19 @@ export default function MenuManagement() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  // The pencil on a Menu Items card navigates here with the item in router state. Nothing
+  // read it, so "edit" always opened a blank Add Item form. Loaded once, then the state is
+  // cleared so a reload doesn't pull the item back over later work.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const handedItem = location.state?.item;
+  useEffect(() => {
+    if (!handedItem) return;
+    editItem(handedItem);
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handedItem]);
+
   if (isLoading) {
     return (
       <DashboardLayout>
@@ -326,10 +343,10 @@ export default function MenuManagement() {
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label>Item Name</Label>
+              <Label htmlFor="menu-item-name">Item Name</Label>
               <span className="text-xs text-muted-foreground">{item.name.length}/{ITEM_NAME_MAX}</span>
             </div>
-            <Input
+            <Input id="menu-item-name"
               value={item.name}
               maxLength={ITEM_NAME_MAX}
               onChange={(e) => setItem((i) => ({ ...i, name: e.target.value.slice(0, ITEM_NAME_MAX) }))}
@@ -338,18 +355,18 @@ export default function MenuManagement() {
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label>Description</Label>
+              <Label htmlFor="menu-description">Description</Label>
               <span className="text-xs text-muted-foreground">
                 {(item.description ?? "").length}/{DESCRIPTION_MAX}
               </span>
             </div>
-            <Textarea value={item.description} maxLength={DESCRIPTION_MAX} onChange={(e) => setItem((i) => ({ ...i, description: e.target.value }))} />
+            <Textarea id="menu-description" value={item.description} maxLength={DESCRIPTION_MAX} onChange={(e) => setItem((i) => ({ ...i, description: e.target.value }))} />
           </div>
 
           <div className="space-y-1.5">
-            <Label>Preparation Time</Label>
+            <Label htmlFor="menu-preparation-time">Preparation Time</Label>
             <Select value={String(item.prepTime)} onValueChange={(v) => setItem((i) => ({ ...i, prepTime: Number(v) }))}>
-              <SelectTrigger className="w-full">
+              <SelectTrigger id="menu-preparation-time" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -382,29 +399,43 @@ export default function MenuManagement() {
               <Chip label="Add Category" dashed icon={Plus} onClick={() => setShowNewCat((v) => !v)} />
             </div>
             {showNewCat && (
-              <div className="flex gap-2">
-                <Input
-                  value={newCatName}
-                  onChange={(e) => setNewCatName(e.target.value)}
-                  placeholder="Category name"
-                  className="h-8 text-sm"
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={!newCatName.trim() || createCategoryMutation.isPending}
-                  onClick={async () => {
+              <form
+                className="flex gap-2"
+                // Enter in the name box saves too, and a refused name (a duplicate, too long)
+                // now says why — the click handler had no catch, so it failed silently.
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!newCatName.trim() || createCategoryMutation.isPending) return;
+                  setNewCatError("");
+                  try {
                     const res = await createCategoryMutation.mutateAsync({ name: newCatName.trim() });
                     const cat = res.data?.data?.category;
                     if (cat) setItem((i) => ({ ...i, categoryId: cat._id, categoryName: cat.name }));
                     setNewCatName("");
                     setShowNewCat(false);
-                  }}
+                  } catch (err) {
+                    setNewCatError(err.message ?? "Couldn't add the category");
+                  }
+                }}
+              >
+                <Input
+                  aria-label="New category name"
+                  value={newCatName}
+                  onChange={(e) => { setNewCatName(e.target.value); setNewCatError(""); }}
+                  placeholder="Category name"
+                  maxLength={60}
+                  className="h-8 text-sm"
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={!newCatName.trim() || createCategoryMutation.isPending}
                 >
                   Save
                 </Button>
-              </div>
+              </form>
             )}
+            {newCatError ? <p role="alert" className="text-xs text-red-600">{newCatError}</p> : null}
             {!item.categoryId && <p className="text-xs text-muted-foreground">Select or create a category</p>}
           </div>
 
@@ -432,15 +463,15 @@ export default function MenuManagement() {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Selling Price (MRP)</Label>
-              <RupeeInput
+              <Label htmlFor="menu-selling-price-mrp">Selling Price (MRP)</Label>
+              <RupeeInput id="menu-selling-price-mrp"
                 value={item.sellingPrice}
                 onChange={(e) => setItem((i) => ({ ...i, sellingPrice: e.target.value }))}
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Discounted Price</Label>
-              <RupeeInput
+              <Label htmlFor="menu-discounted-price">Discounted Price</Label>
+              <RupeeInput id="menu-discounted-price"
                 value={item.discountedPrice}
                 onChange={(e) => setItem((i) => ({ ...i, discountedPrice: e.target.value }))}
                 placeholder="Optional"

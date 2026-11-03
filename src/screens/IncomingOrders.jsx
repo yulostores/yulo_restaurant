@@ -85,7 +85,10 @@ function addressLine(address) {
 
 /* ── Reject dialog ── */
 function RejectDialog({ order, reasons, busy, error, onCancel, onConfirm }) {
-  const presets = (reasons ?? []).filter((r) => r.toLowerCase() !== "other");
+  // "Unable to deliver to this address" means nothing for a table or a pickup order.
+  const presets = (reasons ?? []).filter(
+    (r) => r.toLowerCase() !== "other" && (order?.type === "delivery" || !/deliver/i.test(r)),
+  );
   const [choice, setChoice] = useState(null); // a preset, or "other"
   const [custom, setCustom] = useState("");
 

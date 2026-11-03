@@ -40,6 +40,7 @@ const ALLOWED_AVATAR_TYPES = ["image/jpeg", "image/png", "image/webp"];
 // The server validates `name` with zod `.min(2)`; check it here so a too-short name
 // is a message under the field rather than a 400 with a flattened zod error.
 const MIN_NAME_LENGTH = 2;
+const MAX_NAME_LENGTH = 80;
 
 function initials(name = "") {
   if (!name) return "—";
@@ -90,7 +91,14 @@ export default function Profile() {
   }, [avatarFile]);
 
   const nameError =
-    form.name.trim().length >= MIN_NAME_LENGTH ? "" : "Name must be at least 2 characters";
+    form.name.trim().length < MIN_NAME_LENGTH
+      ? "Name must be at least 2 characters"
+      : form.name.trim().length > MAX_NAME_LENGTH
+        ? `Name must be at most ${MAX_NAME_LENGTH} characters`
+        : "";
+  // Same rule as the server (controllers/user.controller.js); blank removes the number.
+  const phoneError =
+    form.phone.trim() && !/^\d{10}$/.test(form.phone.trim()) ? "Enter a valid 10-digit phone number" : "";
 
   const dirty = useMemo(() => {
     if (avatarFile) return true;
@@ -142,8 +150,8 @@ export default function Profile() {
 
   function handleSave(e) {
     e.preventDefault();
-    if (nameError) {
-      setStatus({ tone: "error", text: nameError });
+    if (nameError || phoneError) {
+      setStatus({ tone: "error", text: nameError || phoneError });
       return;
     }
     setStatus(null);
@@ -197,7 +205,7 @@ export default function Profile() {
             ) : null}
             <Button
               type="submit"
-              disabled={!dirty || !!nameError || updateMutation.isPending}
+              disabled={!dirty || !!nameError || !!phoneError || updateMutation.isPending}
               className="bg-brand-gradient text-white hover:brightness-105"
             >
               {updateMutation.isPending ? "Saving…" : "Save Changes"}
@@ -268,8 +276,11 @@ export default function Profile() {
                 inputMode="tel"
                 autoComplete="tel"
                 value={form.phone}
-                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                maxLength={10}
+                aria-invalid={!!phoneError}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value.replace(/\D/g, "") }))}
               />
+              {phoneError ? <p className="text-[11px] text-brand-maroon">{phoneError}</p> : null}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="profile-email">Email</Label>

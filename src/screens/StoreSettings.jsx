@@ -624,20 +624,24 @@ export default function StoreSettings() {
   const errors = useMemo(() => {
     if (!form || !requirements) return {};
     const found = validateFields(spec.all, form);
-    // The GST number's stricter rules (required, a real GSTIN) apply once the restaurant is
-    // GST-registered — but, as on the server, only to a save that changes the toggle or the
-    // number. A registered restaurant holding an older-format number can still fix its phone
-    // without being made to re-enter its GSTIN first.
-    const gstPath = "settings.gstNumber";
+    // As on the server (validateStoreSettingsChanges): a field this save changes gets its
+    // full rules, one it leaves alone only blocks when it is required and blank. A value saved
+    // in an older format — a GSTIN, a legal entity type, a website — never stops an owner
+    // fixing their phone number; it is checked the moment it is edited. The GST number also
+    // counts as changed when the "GST registered" toggle that tightens it is flipped.
     const saved = original ? JSON.parse(original) : null;
-    const gstTouched =
-      !saved ||
-      saved.gstRegistered !== form.gstRegistered ||
-      (saved.settings?.gstNumber ?? "") !== (form.settings?.gstNumber ?? "");
-    if (!gstTouched) {
-      const baseError = fieldError(spec.get(gstPath), form.settings?.gstNumber);
-      if (baseError) found[gstPath] = baseError;
-      else delete found[gstPath];
+    if (saved) {
+      const same = (path) =>
+        JSON.stringify(getByPath(saved, path) ?? "") === JSON.stringify(getByPath(form, path) ?? "");
+      for (const field of spec.all) {
+        const condition = field.requiredWhen;
+        if (!same(field.path) || (condition && !same(condition.path))) continue;
+        const value = getByPath(form, field.path);
+        const blank = value === undefined || value === null || String(value).trim() === "" || (Array.isArray(value) && !value.length);
+        const message = field.required && blank ? fieldError(field, value) : null;
+        if (message) found[field.path] = message;
+        else delete found[field.path];
+      }
     }
     // An open day with a blank time would otherwise post 00:00, silently marking the
     // restaurant open from midnight. Hours are a table, not a field, so this one rule

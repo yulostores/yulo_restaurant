@@ -77,6 +77,11 @@ function initialSession() {
   const cached = readProfile();
   if (!cached) return { profile: null, ended: false };
   if (!cached.expiresAt || isExpired(cached)) return { profile: null, ended: true };
+  // A profile without its token (storage cleared in part, a failed write) can't call
+  // anything: the screens rendered from it and polled with no credentials — the server's
+  // "No token provided" isn't a session-over code — so the waiter was never sent back to
+  // sign in. Treat it as a session that has ended.
+  if (!getStaffToken()) return { profile: null, ended: true };
   return { profile: cached, ended: false };
 }
 

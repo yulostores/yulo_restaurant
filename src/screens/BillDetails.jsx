@@ -54,6 +54,9 @@ function counterErrorMessage(err) {
     return "The guest's online payment is going through — wait for it to show as paid.";
   }
   if (err?.code === "BILL_ALREADY_PAID") return "This bill has already been paid.";
+  if (err?.code === "BILL_TOTAL_CHANGED") {
+    return "A round was added to this table since the bill was opened — check the new total, then mark it paid.";
+  }
   return errorMessage(err);
 }
 
@@ -73,7 +76,7 @@ function CounterSettle({ restaurantId, bill }) {
   async function settle() {
     setError("");
     try {
-      await markPaid.mutateAsync({ billId: bill._id, method });
+      await markPaid.mutateAsync({ billId: bill._id, method, expectedTotal: bill.charges?.grandTotal });
       toast.success(`Bill settled by ${COUNTER_METHODS.find((m) => m.value === method)?.label}`);
     } catch (err) {
       const message = counterErrorMessage(err);
