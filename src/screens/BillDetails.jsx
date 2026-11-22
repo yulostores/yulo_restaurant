@@ -11,7 +11,7 @@
 
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Printer, Receipt, Search, Wallet } from "lucide-react";
+import { ArrowLeft, Minus, Printer, Receipt, Search, Trash2, Wallet } from "lucide-react";
 import { printBill } from "@/lib/printBill";
 
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
@@ -19,8 +19,13 @@ import {
   useBill,
   useBillForOrder,
   useBills,
+  useEditBillItem,
+  useGenerateBill,
   useMarkBillPaid,
+  useOpenTables,
   useReleaseBillPayment,
+  useSetBillDiscount,
+  useSetBillServiceCharge,
 } from "@/hooks/owner/useBills";
 import { useToast } from "@/components/Toaster";
 import BillDocument from "@/components/BillDocument";
@@ -173,6 +178,233 @@ function CounterSettle({ restaurantId, bill }) {
 }
 
 // ── Single bill ──────────────────────────────────────────────────────
+// ── Editing an open table bill (before payment) ──────────────────────
+// Lower a dish's quantity or remove it, and set a discount. Each change re-totals the bill on
+// the server and is listed under "Changes made".
+function EditBill({ restaurantId, bill }) {
+  const editItem = useEditBillItem(restaurantId);
+  const setDiscount = useSetBillDiscount(restaurantId);
+  const toast = useToast();
+  const current = (bill.discountsApplied ?? []).find((d) => d.manual) ?? null;
+  const [type, setType] = useState(current?.manualType ?? "percent");
+  const [value, setValue] = useState(current?.manualValue != null ? String(current.manualValue) : "");
+  const [error, setError] = useState("");
+
+  const rounds = (bill.batches ?? []).filter((b) => b.status !== "cancelled" && (b.items ?? []).length > 0);
+
+  async function changeQty(batch, lineIndex, quantity) {
+    setError("");
+    try {
+      await editItem.mutateAsync({ billId: bill._id, orderId: batch.orderId, lineIndex, quantity });
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function applyDiscount(e) {
+    e.preventDefault();
+    setError("");
+    const n = value === "" ? 0 : Number(value);
+    if (!Number.isFinite(n) || n < 0) {
+      setError("Enter a discount of 0 or more.");
+      return;
+    }
+    try {
+      await setDiscount.mutateAsync({ billId: bill._id, type, value: n });
+      toast.success(n > 0 ? "Discount applied" : "Discount removed");
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  const serviceCharge = useSetBillServiceCharge(restaurantId);
+  const busy = editItem.isPending || setDiscount.isPending || serviceCharge.isPending;
+
+  async function toggleServiceCharge() {
+    setError("");
+    try {
+      await serviceCharge.mutateAsync({ billId: bill._id, enabled: !!bill.serviceChargeRemoved });
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  return (
+    <Card className="print:hidden">
+      <CardHeader className="pb-2">
+        <h2 className="text-base font-bold">Edit bill</h2>
+        <p className="text-xs text-muted-foreground">
+          Remove a dish or lower its quantity, take off the service charge, or give a discount — before the bill is paid.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {rounds.map((batch) => (
+          <div key={batch.orderId}>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Round {batch.round ?? ""}
+            </p>
+            <ul className="divide-y divide-border rounded-lg border border-border">
+              {batch.items.map((item, lineIndex) => (
+                <li key={`${batch.orderId}-${lineIndex}`} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="min-w-0 truncate">
+                    {item.quantity} × {item.name}
+                    <span className="ml-2 text-muted-foreground">{formatMoney(item.lineTotal)}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || item.quantity <= 1}
+                      onClick={() => changeQty(batch, lineIndex, item.quantity - 1)}
+                      aria-label={`One less ${item.name}`}
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => changeQty(batch, lineIndex, 0)}
+                      aria-label={`Remove ${item.name}`}
+                      className="text-brand-maroon"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+
+        {/* The restaurant's fixed service charge (Store Settings) — on or off for this bill. */}
+        {bill.serviceChargeRemoved || bill.charges?.serviceChargeAmount ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-sm">
+            <span>
+              Service charge{" "}
+              <span className="text-muted-foreground">
+                {bill.serviceChargeRemoved ? "— removed from this bill" : formatMoney(bill.charges?.serviceChargeAmount)}
+              </span>
+            </span>
+            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={toggleServiceCharge}>
+              {bill.serviceChargeRemoved ? "Add service charge" : "Remove service charge"}
+            </Button>
+          </div>
+        ) : null}
+
+        <form onSubmit={applyDiscount} className="flex flex-wrap items-end gap-2">
+          <div>
+            <label htmlFor="bill-discount" className="mb-1 block text-xs font-semibold">Discount</label>
+            <div className="flex">
+              <select
+                aria-label="Discount type"
+                value={type}
+                onChange={(e) => setType(e.target.value)}
+                className="rounded-l-md border border-r-0 border-input bg-background px-2 text-sm"
+              >
+                <option value="percent">%</option>
+                <option value="flat">₹</option>
+              </select>
+              <Input
+                id="bill-discount"
+                inputMode="decimal"
+                value={value}
+                onChange={(e) => setValue(e.target.value.replace(/[^\d.]/g, ""))}
+                placeholder={type === "percent" ? "e.g. 10" : "e.g. 50"}
+                className="w-28 rounded-l-none"
+              />
+            </div>
+          </div>
+          <Button type="submit" disabled={busy}>{current ? "Update discount" : "Apply discount"}</Button>
+          {current ? (
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => { setValue(""); setDiscount.mutateAsync({ billId: bill._id, type, value: 0 }).catch((err) => setError(errorMessage(err))); }}>
+              Remove discount
+            </Button>
+          ) : null}
+        </form>
+
+        {error ? <p role="alert" className="text-sm text-brand-maroon">{error}</p> : null}
+
+        {(bill.adjustments ?? []).length > 0 ? (
+          <div>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Changes made</p>
+            <ul className="space-y-0.5 text-xs text-muted-foreground">
+              {bill.adjustments.map((a, i) => (
+                <li key={i}>
+                  {formatDateTime(a.at)} ·{" "}
+                  {a.kind === "service_charge"
+                    ? a.discount === "removed" ? "Service charge removed" : "Service charge added back"
+                    : a.kind === "discount"
+                    ? a.discount === "removed" ? "Discount removed" : `Discount set to ${a.discount}`
+                    : a.toQty === 0
+                      ? `Removed ${a.itemName} (was ${a.fromQty})`
+                      : `${a.itemName}: ${a.fromQty} → ${a.toQty}`}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Tables waiting for their bill ────────────────────────────────────
+function OpenTables({ restaurantId, onOpenBill }) {
+  const { data: tables = [] } = useOpenTables(restaurantId);
+  const generate = useGenerateBill(restaurantId);
+  const [error, setError] = useState("");
+  if (tables.length === 0) return null;
+
+  async function gen(t) {
+    setError("");
+    try {
+      const bill = await generate.mutateAsync({ sessionId: t.sessionId });
+      onOpenBill(bill._id);
+    } catch (err) {
+      setError(
+        err?.code === "ORDERS_PENDING"
+          ? `Table ${t.table}: some rounds aren't served yet — mark them served first.`
+          : errorMessage(err),
+      );
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <h2 className="text-base font-bold">Tables to bill</h2>
+        <p className="text-xs text-muted-foreground">Generate a table&apos;s bill once everything is served.</p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {tables.map((t) => (
+          <div key={t.sessionId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-sm">
+            <span>
+              <span className="font-semibold">{t.table ?? "—"}</span>
+              <span className="ml-2 text-muted-foreground">
+                {t.rounds} round{t.rounds === 1 ? "" : "s"} · {t.itemCount} item{t.itemCount === 1 ? "" : "s"} · {formatMoney(t.subtotal)}
+              </span>
+              {!t.allServed ? <Badge variant="warn" className="ml-2">Not all served</Badge> : null}
+            </span>
+            {t.bill ? (
+              <Button size="sm" variant="outline" onClick={() => onOpenBill(t.bill._id)}>
+                Open bill {t.bill.billNumber ?? ""}
+              </Button>
+            ) : (
+              <Button size="sm" disabled={!t.allServed || generate.isPending} onClick={() => gen(t)}>
+                Generate bill
+              </Button>
+            )}
+          </div>
+        ))}
+        {error ? <p role="alert" className="text-sm text-brand-maroon">{error}</p> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function BillView({ restaurantId, bill, isLoading, isError, error, onBack }) {
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -250,7 +482,10 @@ function BillView({ restaurantId, bill, isLoading, isError, error, onBack }) {
       </Card>
 
       {bill.type === "dine_in" && !bill.payment?.isPaid && bill.status === "open" ? (
-        <CounterSettle restaurantId={restaurantId} bill={bill} />
+        <>
+          <EditBill key={bill._id} restaurantId={restaurantId} bill={bill} />
+          <CounterSettle restaurantId={restaurantId} bill={bill} />
+        </>
       ) : null}
     </>
   );
@@ -357,6 +592,8 @@ export default function BillDetails() {
           discount breakdown, and the rounds behind it.
         </p>
       </div>
+
+      <OpenTables restaurantId={restaurantId} onOpenBill={(id) => setSearchParams({ billId: id })} />
 
       {isError ? <p className="text-sm text-brand-maroon">Failed to load: {error.message}</p> : null}
 

@@ -17,7 +17,7 @@ export const customerApi = {
   getRestaurant: (restaurantId) => client.get(`/restaurants/${restaurantId}`),
 
   // Returns { menu: [{ _id, name, subCategories: [{ _id, name, items }], items }] }
-  getMenu: (restaurantId) => client.get(`/restaurants/${restaurantId}/menu`),
+  getMenu: (restaurantId) => client.get(`/restaurants/${restaurantId}/menu`, { params: { channel: "dine_in" } }),
 
   getReviews: (restaurantId, params = {}) =>
     client.get(`/restaurants/${restaurantId}/reviews`, { params }),

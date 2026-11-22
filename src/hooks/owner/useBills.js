@@ -74,3 +74,44 @@ export function useBillForOrder(restaurantId, orderId) {
     staleTime: 30_000,
   });
 }
+
+// ── Generating and editing a bill (owner) ─────────────────────────────
+
+export function useOpenTables(restaurantId) {
+  return useQuery({
+    queryKey: ["bills", restaurantId, "open-tables"],
+    queryFn: () => ownerApi.listOpenTables(restaurantId).then((r) => r.data.data.tables ?? []),
+    enabled: !!restaurantId,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useGenerateBill(restaurantId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId }) => ownerApi.generateBill(restaurantId, sessionId).then((r) => r.data.data.bill),
+    onSuccess: (bill) => {
+      if (bill?._id) qc.setQueryData(billKeys.one(restaurantId, bill._id), bill);
+      qc.invalidateQueries({ queryKey: ["bills", restaurantId] });
+    },
+  });
+}
+
+export function useEditBillItem(restaurantId) {
+  return useBillMutation(restaurantId, ({ billId, orderId, lineIndex, quantity }) =>
+    ownerApi.editBillItem(restaurantId, billId, { orderId, lineIndex, quantity }),
+  );
+}
+
+export function useSetBillDiscount(restaurantId) {
+  return useBillMutation(restaurantId, ({ billId, type, value }) =>
+    ownerApi.setBillDiscount(restaurantId, billId, { type, value }),
+  );
+}
+
+export function useSetBillServiceCharge(restaurantId) {
+  return useBillMutation(restaurantId, ({ billId, enabled }) =>
+    ownerApi.setBillServiceCharge(restaurantId, billId, { enabled }),
+  );
+}

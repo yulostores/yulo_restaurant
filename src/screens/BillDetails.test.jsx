@@ -29,6 +29,11 @@ vi.mock("@/hooks/owner/useBills", () => {
     useBillForOrder: () => ({ data: undefined, isLoading: false, isError: false }),
     useMarkBillPaid: () => m.markPaid,
     useReleaseBillPayment: () => m.release,
+    useOpenTables: () => ({ data: [] }),
+    useGenerateBill: () => ({ mutateAsync: async () => bill, isPending: false }),
+    useEditBillItem: () => ({ mutateAsync: async () => ({}), isPending: false }),
+    useSetBillDiscount: () => ({ mutateAsync: async () => ({}), isPending: false }),
+    useSetBillServiceCharge: () => ({ mutateAsync: async () => ({}), isPending: false }),
   };
 });
 

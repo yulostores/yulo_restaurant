@@ -19,6 +19,8 @@ export const ownerApi = {
   // ── Restaurants ───────────────────────────────────────────────────
   listRestaurants: () => client.get("/owner/restaurants"),
   createRestaurant: (body) => client.post("/owner/restaurants", body),
+  // Address → { lat, lng } for the registration map (GET /owner/geocode).
+  geocode: (address) => client.get("/owner/geocode", { params: address }),
 
   // ── Restaurant profile (allowed at any approvalStatus) ────────────
   getRestaurantDetail: (rId) => client.get(`/owner/${rId}/restaurant`),
@@ -204,6 +206,18 @@ export const ownerApi = {
   listBills: (rId, params = {}) =>
     client.get(`/owner/${rId}/bills`, { params }),
   getBill: (rId, billId) => client.get(`/owner/${rId}/bills/${billId}`),
+  // Tables with an open sitting, and whether every round is served (so it can be billed).
+  listOpenTables: (rId) => client.get(`/owner/${rId}/bills/open-tables`),
+  generateBill: (rId, sessionId) => client.post(`/owner/${rId}/bills/sessions/${sessionId}/generate`, {}),
+  // Lower a dish's quantity on an open bill (0 removes it).
+  editBillItem: (rId, billId, { orderId, lineIndex, quantity }) =>
+    client.patch(`/owner/${rId}/bills/${billId}/items`, { orderId, lineIndex, quantity }),
+  // The owner's discount: { type: "flat" | "percent", value } — 0 removes it.
+  setBillDiscount: (rId, billId, { type, value }) =>
+    client.put(`/owner/${rId}/bills/${billId}/discount`, { type, value }),
+  // The restaurant's fixed service charge on or off for one bill.
+  setBillServiceCharge: (rId, billId, { enabled }) =>
+    client.put(`/owner/${rId}/bills/${billId}/service-charge`, { enabled }),
   // Settle a dine-in bill paid at the counter. method: "cash" | "upi" | "card".
   // 409 PAID_ONLINE (the guest is paying online), BILL_ALREADY_PAID, ORDERS_PENDING.
   // `expectedTotal` is the total on screen: if a round was added since, the server re-prices

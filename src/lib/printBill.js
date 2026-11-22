@@ -4,7 +4,7 @@
 // CSS, no layout to fight) built from the same bill payload and the same lib/bill helpers as
 // components/BillDocument.jsx, so the printed copy says exactly what the screen does.
 
-import { billFacts, chargeLines, formatDateTime, formatMoney, paymentSummary } from "@/lib/bill";
+import { billFacts, chargeLines, chargeValueText, formatDateTime, formatMoney, paymentSummary } from "@/lib/bill";
 
 const FRAME_ID = "bill-print-frame";
 
@@ -67,7 +67,7 @@ export function buildBillPrintHtml(bill) {
     .map(
       (line) => `<tr>
         <td colspan="3">${escapeHtml(line.label)}${line.sublabel ? `<div class="small muted">${escapeHtml(line.sublabel)}</div>` : ""}</td>
-        <td class="num">${escapeHtml(line.tone === "credit" ? `−${formatMoney(Math.abs(line.value))}` : formatMoney(line.value))}</td>
+        <td class="num">${escapeHtml(chargeValueText(line))}</td>
       </tr>`,
     )
     .join("");

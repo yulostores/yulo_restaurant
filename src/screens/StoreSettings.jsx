@@ -50,6 +50,8 @@ import { catalogApi } from "@/api/catalog.api";
 import DashboardLayout from "@/components/DashboardLayout";
 import ApprovalNotice from "@/components/ApprovalNotice";
 import ComplianceDocuments from "@/components/ComplianceDocuments";
+import LocationPicker from "@/components/LocationPicker";
+import { clearDraft, loadDraft, saveDraft } from "@/lib/draft";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -199,47 +201,6 @@ const DISCOVERY_RADIUS_KM = 25;
 // "Use my current location": the geocoder places a restaurant from its address, which can
 // land a street or two away. Pressed while standing in the restaurant, this saves the exact
 // spot instead — straight away, independent of the rest of the form.
-function UseMyLocationButton({ restaurantId }) {
-  const setLocation = useSetRestaurantLocation(restaurantId);
-  const [locating, setLocating] = useState(false);
-  const [message, setMessage] = useState(null);
-
-  async function handleClick() {
-    setMessage(null);
-    setLocating(true);
-    try {
-      const pos = await getCurrentPosition();
-      await setLocation.mutateAsync(pos);
-      setMessage({
-        tone: "ok",
-        text: `Saved your exact location${pos.accuracy ? ` (accurate to about ${Math.round(pos.accuracy)} m)` : ""}.`,
-      });
-    } catch (err) {
-      setMessage({ tone: "error", text: err.message ?? "Couldn't save your location" });
-    } finally {
-      setLocating(false);
-    }
-  }
-
-  return (
-    <div className="mt-2 flex flex-wrap items-center gap-2">
-      <Button type="button" variant="outline" size="sm" onClick={handleClick} disabled={locating}>
-        <LocateFixed />
-        {locating ? "Getting your location…" : "Use my current location"}
-      </Button>
-      <span className="text-[11px] text-muted-foreground">
-        {message ? (
-          <span className={message.tone === "error" ? "text-destructive" : "text-emerald-700"}>
-            {message.text}
-          </span>
-        ) : (
-          "Press this while you are inside the restaurant to pin its exact spot."
-        )}
-      </span>
-    </div>
-  );
-}
-
 function MapPlacement({ restaurant, restaurantId }) {
   const coordinates = restaurant?.location?.coordinates;
   const [lng, lat] = Array.isArray(coordinates) ? coordinates : [];
@@ -249,44 +210,147 @@ function MapPlacement({ restaurant, restaurantId }) {
     Number.isFinite(lng) &&
     Number.isFinite(lat) &&
     !(lng === 0 && lat === 0);
+  const saved = placed ? { lat, lng } : null;
 
-  if (!placed) {
-    return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
-        <div className="flex items-start gap-2">
-          <MapPinOff className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-          <p className="text-[11px] leading-relaxed text-destructive">
-            <span className="font-semibold">Not placed on the map yet.</span> Customers cannot
-            find you until this is fixed, however complete the rest of your profile is. Use your
-            current location below, or check the street, city, state and pincode above and save
-            again. If it still fails, ask support to place you manually.
-          </p>
-        </div>
-        <UseMyLocationButton restaurantId={restaurantId} />
-      </div>
-    );
+  const setLocation = useSetRestaurantLocation(restaurantId);
+  const [pin, setPin] = useState(saved);
+  const [message, setMessage] = useState(null);
+  // A pin moved on the map but not saved yet.
+  const moved = !!pin && (!saved || pin.lat !== saved.lat || pin.lng !== saved.lng);
+
+  async function savePin() {
+    setMessage(null);
+    try {
+      await setLocation.mutateAsync(pin);
+      setMessage({ tone: "ok", text: "Location saved." });
+    } catch (err) {
+      setMessage({ tone: "error", text: err.message ?? "Couldn't save the location" });
+    }
   }
 
   return (
-    <div className="rounded-lg border border-brand-line bg-muted/30 px-3 py-2">
-      <div className="flex items-start gap-2">
-        <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-orange" />
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          <span className="font-semibold text-foreground">You are on the map.</span> Customers
-          within {DISCOVERY_RADIUS_KM} km of this point see your restaurant, closest first.
-          Your delivery radius (under Delivery) decides how far you will actually deliver —
-          beyond it you are still listed, marked as not deliverable to that address.{" "}
-          <a
-            href={`https://www.google.com/maps?q=${lat},${lng}`}
-            target="_blank"
-            rel="noreferrer"
-            className="font-semibold text-brand-orange"
-          >
-            Check the pin
-          </a>
+    <div
+      className={cn(
+        "rounded-lg border px-3 py-3",
+        placed ? "border-brand-line bg-muted/30" : "border-destructive/30 bg-destructive/5",
+      )}
+    >
+      <div className="mb-2 flex items-start gap-2">
+        {placed ? (
+          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-orange" />
+        ) : (
+          <MapPinOff className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+        )}
+        <p className={cn("text-[11px] leading-relaxed", placed ? "text-muted-foreground" : "text-destructive")}>
+          {placed ? (
+            <>
+              <span className="font-semibold text-foreground">You are on the map.</span> Customers
+              within {DISCOVERY_RADIUS_KM} km of this pin see your restaurant, closest first. Your
+              delivery radius (under Delivery) decides how far you actually deliver.
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">Not placed on the map yet.</span> Customers cannot
+              find you until you place the pin below and save it.
+            </>
+          )}
         </p>
       </div>
-      <UseMyLocationButton restaurantId={restaurantId} />
+      <LocationPicker value={pin} onChange={setPin} address={restaurant?.address ?? {}} />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Button type="button" size="sm" onClick={savePin} disabled={!moved || setLocation.isPending}>
+          {setLocation.isPending ? "Saving…" : "Save this location"}
+        </Button>
+        {moved ? (
+          <Button type="button" size="sm" variant="ghost" onClick={() => setPin(saved)}>
+            Undo
+          </Button>
+        ) : null}
+        {message ? (
+          <span className={cn("text-[11px]", message.tone === "error" ? "text-destructive" : "text-emerald-700")}>
+            {message.text}
+          </span>
+        ) : moved ? (
+          <span className="text-[11px] text-brand-orange">Pin moved — save to apply it.</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// Pure veg or veg & non-veg. In a pure-veg restaurant nothing non-veg is offered anywhere: the
+// menu form only has VEG, and the server refuses a non-veg dish (or the switch, while one is
+// still on the menu).
+const VEG_CHOICES = [
+  { value: true, label: "Pure-veg", hint: "Only vegetarian dishes" },
+  { value: false, label: "Veg/Non-veg", hint: "Both on the menu" },
+];
+
+function VegChoice({ value, onChange, disabled, invalid }) {
+  return (
+    <div className={cn("grid grid-cols-2 gap-2", invalid && "rounded-lg ring-1 ring-destructive")}>
+      {VEG_CHOICES.map((c) => (
+        <button
+          key={String(c.value)}
+          type="button"
+          disabled={disabled}
+          aria-pressed={value === c.value}
+          onClick={() => onChange(c.value)}
+          className={cn(
+            "rounded-lg border px-3 py-2.5 text-left transition disabled:opacity-60",
+            value === c.value
+              ? "border-brand-green bg-[#E8F5EC] text-brand-green"
+              : "border-input bg-background hover:bg-muted/40",
+          )}
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold">
+            <span
+              className={cn(
+                "inline-flex h-4 w-4 items-center justify-center rounded-sm border",
+                c.value ? "border-green-600" : "border-brand-maroon",
+              )}
+            >
+              <span className={cn("h-2 w-2 rounded-full", c.value ? "bg-green-600" : "bg-brand-maroon")} />
+            </span>
+            {c.label}
+          </span>
+          <span className="mt-0.5 block text-[11px] text-muted-foreground">{c.hint}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Saved straight away (PATCH /owner/:rId/restaurant), like the map pin.
+function VegSetting({ restaurant, restaurantId, onSaved }) {
+  const [value, setValue] = useState(!!restaurant?.isPureVeg);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  async function change(next) {
+    if (next === value) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const { data } = await ownerApi.updateRestaurant(restaurantId, { isPureVeg: next });
+      setValue(next);
+      onSaved?.(data.data?.restaurant);
+      setMessage({ tone: "ok", text: next ? "Saved — your restaurant is Pure-veg." : "Saved — Veg/Non-veg." });
+    } catch (err) {
+      setMessage({ tone: "error", text: err.message ?? "Couldn't save" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <VegChoice value={value} onChange={change} disabled={busy} />
+      {message ? (
+        <p className={cn("text-[11px]", message.tone === "error" ? "text-destructive" : "text-emerald-700")}>
+          {message.text}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -500,7 +564,7 @@ function seedForm({ restaurant, hours, delivery, spec, hoursConfig }) {
   const hoursMap = Object.fromEntries(
     (hours.length ? hours : restaurant.operatingHours ?? []).map((h) => [h.day, h]),
   );
-  const compliance = [...spec.section("business"), ...spec.section("licenses")];
+  const compliance = [...spec.section("business"), ...spec.section("licenses"), ...spec.section("billing")];
 
   return {
     name: restaurant.name ?? "",
@@ -536,14 +600,14 @@ function seedForm({ restaurant, hours, delivery, spec, hoursConfig }) {
       compliance.map((f) => {
         const key = leaf(f.path);
         const raw = restaurant.settings?.[key];
-        return [key, f.type === "date" ? toDateInput(raw) : raw ?? ""];
+        return [key, f.type === "date" ? toDateInput(raw) : f.type === "number" ? (raw == null ? "" : String(raw)) : raw ?? ""];
       }),
     ),
   };
 }
 
 export default function StoreSettings() {
-  const { restaurantId, fetchRestaurants, updateRestaurant } = useOwnerAuth();
+  const { restaurantId, fetchRestaurants, updateRestaurant, user } = useOwnerAuth();
   const {
     data: requirements,
     isLoading: reqLoading,
@@ -584,13 +648,32 @@ export default function StoreSettings() {
 
   // create-restaurant form (used when restaurantId is null)
   const [creating, setCreating] = useState(false);
-  // "Use my current location" on the create form — { lat, lng, accuracy } or null.
-  const [newPin, setNewPin] = useState(null);
-  const [pinning, setPinning] = useState(false);
-  const [pinError, setPinError] = useState("");
+  // The map pin on the create form — { lat, lng } or null. Required: it is how the
+  // restaurant's coordinates are captured.
+  const createDraftKey = `create:${user?._id ?? "owner"}`;
+  const settingsDraftKey = `settings:${restaurantId}`;
+  const [createDraft] = useState(() => loadDraft(createDraftKey));
+  const [newPin, setNewPin] = useState(() => createDraft?.pin ?? null);
   const [createError, setCreateError] = useState("");
   const [createSubmitted, setCreateSubmitted] = useState(false);
-  const [newRestaurant, setNewRestaurant] = useState({ name: "", address: {} });
+  const [newRestaurant, setNewRestaurant] = useState(
+    () => createDraft?.restaurant ?? { name: "", address: {} },
+  );
+  // "Draft saved" feedback for the auto-save, on both forms.
+  const [draftNote, setDraftNote] = useState(!restaurantId && createDraft ? "Restored your saved draft" : "");
+
+  // Auto-save the create form as it is typed (debounced), so nothing is lost before submit.
+  useEffect(() => {
+    if (restaurantId) return undefined;
+    const empty = !newPin && !newRestaurant.name && !Object.values(newRestaurant.address ?? {}).some(Boolean);
+    if (empty) return undefined;
+    const t = setTimeout(() => {
+      if (saveDraft(createDraftKey, { restaurant: newRestaurant, pin: newPin })) {
+        setDraftNote(`Draft saved ${new Date().toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}`);
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [restaurantId, newRestaurant, newPin, createDraftKey]);
 
   const dirty =
     !!logoFile || !!bannerFile || (!!form && !!original && JSON.stringify(form) !== original);
@@ -615,9 +698,32 @@ export default function StoreSettings() {
       spec,
       hoursConfig: requirements.hours,
     });
-    setForm(seeded);
-    setOriginal(JSON.stringify(seeded));
-  }, [serverSettings, serverHours, serverDelivery, requirements, spec, dirty]);
+    const base = JSON.stringify(seeded);
+    setOriginal(base);
+    // Auto-saved edits from an earlier visit — restored only onto the same server state they
+    // were made against, so a draft never resurrects values the server has since changed.
+    const draft = loadDraft(settingsDraftKey);
+    if (draft?.base === base && draft.form && JSON.stringify(draft.form) !== base) {
+      setForm(draft.form);
+      setStatus({ tone: "ok", text: "Restored your unsaved changes — press Save to apply them" });
+    } else {
+      if (draft) clearDraft(settingsDraftKey);
+      setForm(seeded);
+    }
+  }, [serverSettings, serverHours, serverDelivery, requirements, spec, dirty, settingsDraftKey]);
+
+  // Auto-save edits in progress (debounced) so a refresh or a detour loses nothing. The
+  // brand images can't be kept this way — a picked file has to be picked again.
+  useEffect(() => {
+    if (!form || !original) return undefined;
+    const t = setTimeout(() => {
+      if (JSON.stringify(form) === original) clearDraft(settingsDraftKey);
+      else if (saveDraft(settingsDraftKey, { base: original, form })) {
+        setDraftNote(`Draft auto-saved ${new Date().toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}`);
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [form, original, settingsDraftKey]);
 
   // Every rule in the contract, run against the object that is about to be sent — so what
   // is validated is exactly what is saved.
@@ -786,6 +892,8 @@ export default function StoreSettings() {
       if (saved) updateRestaurant(saved);
 
       setOriginal(JSON.stringify(form));
+      clearDraft(settingsDraftKey);
+      setDraftNote("");
       setLogoFile(null);
       setBannerFile(null);
       setSubmitted(false);
@@ -805,6 +913,8 @@ export default function StoreSettings() {
   }
 
   function discard() {
+    clearDraft(settingsDraftKey);
+    setDraftNote("");
     setForm(JSON.parse(original));
     setLogoFile(null);
     setBannerFile(null);
@@ -826,15 +936,23 @@ export default function StoreSettings() {
       focusFirstInvalid(createErrors);
       return;
     }
+    if (typeof newRestaurant.isPureVeg !== "boolean") {
+      setCreateError("Choose whether your restaurant is Pure-veg or Veg/Non-veg.");
+      return;
+    }
+    if (!newPin) {
+      setCreateError("Place your restaurant on the map — it is how customers nearby find you.");
+      return;
+    }
     setCreating(true);
     setCreateError("");
     try {
-      // The owner's own pin when they used "Use my current location"; otherwise the server
-      // geocodes this address into the GeoJSON point that powers "restaurants near me"
-      // (services/geocode.service.js), and answers 400 ADDRESS_NOT_FOUND if it can't.
+      // The pin the owner placed on the map is the GeoJSON point that powers "restaurants
+      // near me". (The API still geocodes the address when a caller sends no point.)
       await ownerApi.createRestaurant({
-        ...(newPin ? { location: { type: "Point", coordinates: [newPin.lng, newPin.lat] } } : {}),
+        location: { type: "Point", coordinates: [newPin.lng, newPin.lat] },
         name: newRestaurant.name.trim(),
+        isPureVeg: newRestaurant.isPureVeg,
         address: Object.fromEntries(
           Object.entries(newRestaurant.address).map(([k, v]) => [k, v.trim()]),
         ),
@@ -843,6 +961,7 @@ export default function StoreSettings() {
       // approvalStatus "pending", so /dashboard is locked (ApprovalGate) until
       // an admin approves it. Refreshing the context swaps this form for the
       // full settings form plus the "under review" notice.
+      clearDraft(createDraftKey);
       await fetchRestaurants();
     } catch (err) {
       setCreateError(err.message ?? "Failed to create restaurant");
@@ -878,7 +997,7 @@ export default function StoreSettings() {
 
     return (
       <DashboardLayout>
-        <div className="mx-auto w-full max-w-md py-10">
+        <div className="mx-auto w-full max-w-xl py-10">
           <ApprovalNotice className="mb-5" />
           <Card className="w-full">
             <CardHeader className="pb-4">
@@ -912,45 +1031,37 @@ export default function StoreSettings() {
                     </div>
                   ))}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  We place your restaurant on the map from this address, so customers
-                  nearby can find you — the state and pincode are what make that match
-                  accurate. Your restaurant goes to the Yulo admin team for review the
-                  moment you submit — you can keep editing these details while you wait.
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={pinning}
-                    onClick={async () => {
-                      setPinError("");
-                      setPinning(true);
-                      try {
-                        setNewPin(await getCurrentPosition());
-                      } catch (err) {
-                        setPinError(err.message);
-                      } finally {
-                        setPinning(false);
-                      }
+                <Field
+                  label="Food served"
+                  required
+                  error={createSubmitted && typeof newRestaurant.isPureVeg !== "boolean" ? "Choose Pure-veg or Veg/Non-veg" : undefined}
+                >
+                  <VegChoice
+                    value={newRestaurant.isPureVeg}
+                    onChange={(v) => setNew("isPureVeg", v)}
+                    invalid={createSubmitted && typeof newRestaurant.isPureVeg !== "boolean"}
+                  />
+                </Field>
+                <Field
+                  label="Restaurant location on map"
+                  required
+                  error={createSubmitted && !newPin ? "Place the pin on your restaurant" : undefined}
+                >
+                  <LocationPicker
+                    value={newPin}
+                    onChange={(pin) => {
+                      setNewPin(pin);
+                      setCreateError("");
                     }}
-                  >
-                    <LocateFixed />
-                    {pinning ? "Getting your location…" : newPin ? "Update my location" : "Use my current location"}
-                  </Button>
-                  <span className="text-[11px] text-muted-foreground">
-                    {pinError ? (
-                      <span className="text-destructive">{pinError}</span>
-                    ) : newPin ? (
-                      <span className="text-emerald-700">
-                        Exact location captured{newPin.accuracy ? ` (about ${Math.round(newPin.accuracy)} m)` : ""}.
-                      </span>
-                    ) : (
-                      "Optional — press while inside the restaurant for an exact map pin."
-                    )}
-                  </span>
-                </div>
+                    address={newRestaurant.address}
+                    invalid={createSubmitted && !newPin}
+                  />
+                </Field>
+                <p className="text-xs text-muted-foreground">
+                  Your restaurant goes to the Yulo admin team for review the moment you
+                  submit — you can keep editing these details while you wait.
+                  {draftNote ? <span className="ml-1 text-emerald-700">· {draftNote}</span> : null}
+                </p>
                 {createError && (
                   <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{createError}</p>
                 )}
@@ -1001,6 +1112,7 @@ export default function StoreSettings() {
     required: !!profile(path)?.required,
     htmlFor: inputId(path),
     error: errorFor(path),
+    help: profile(path)?.help,
   });
 
   // One text/date/number input, wired to the descriptor that describes it. A path the
@@ -1045,6 +1157,7 @@ export default function StoreSettings() {
             htmlFor={inputId(field.path)}
             required={field.required}
             error={errorFor(field.path)}
+            help={field.help}
           >
             {field.type === "select" ? (
               <SelectField
@@ -1095,7 +1208,6 @@ export default function StoreSettings() {
               </Field>
               <Field {...bind("email")}>{renderInput(profile("email"))}</Field>
               <Field {...bind("phone")}>{renderInput(profile("phone"))}</Field>
-              <Field {...bind("website")}>{renderInput(profile("website"))}</Field>
               <Field {...bind("establishedYear")}>{renderInput(profile("establishedYear"))}</Field>
               <div className="sm:col-span-2">
                 <Field {...bind("description")}>{renderInput(profile("description"))}</Field>
@@ -1115,6 +1227,15 @@ export default function StoreSettings() {
               </p>
               <div className="sm:col-span-2">
                 <MapPlacement restaurant={serverSettings} restaurantId={restaurantId} />
+              </div>
+              <div className="sm:col-span-2">
+                <Field label="Food served">
+                  <VegSetting
+                    restaurant={serverSettings}
+                    restaurantId={restaurantId}
+                    onSaved={(saved) => saved && updateRestaurant(saved)}
+                  />
+                </Field>
               </div>
             </CardContent>
           </Card>
@@ -1292,6 +1413,15 @@ export default function StoreSettings() {
           </Card>
         </div>
 
+        {spec.section("billing").length > 0 ? (
+          <Card className="mt-5">
+            <CardHeader className="pb-4">
+              <h2 className="text-base font-bold">Dine-in Billing</h2>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">{renderSection("billing")}</CardContent>
+          </Card>
+        ) : null}
+
         {/* The payout bank account has its own page — it isn't part of this form's save. */}
         <Link
           to="/payments/settings"
@@ -1324,7 +1454,7 @@ export default function StoreSettings() {
             !status && !dirty && "text-muted-foreground",
           )}
         >
-          {status ? status.text : dirty ? "● You have unsaved changes" : "All changes saved"}
+          {status ? status.text : dirty ? `● You have unsaved changes${draftNote ? ` · ${draftNote.toLowerCase()}` : ""}` : "All changes saved"}
         </span>
         <div className="flex gap-3">
           <Button type="button" variant="outline" onClick={discard} disabled={!dirty || saving}>

@@ -9,7 +9,6 @@ import {
   Pencil,
   Plus,
   Search,
-  Trash2,
   Upload,
 } from "lucide-react";
 
@@ -113,19 +112,21 @@ const ITEM_NAME_MAX = 100;
 
 const EMPTY_ITEM = {
   name: "", description: "", prepTime: 20,
-  sellingPrice: "", discountedPrice: "",
+  sellingPrice: "", halfPlatePrice: "",
+  packagingCharge: "", availableOnline: true,
   categoryId: "", foodType: "veg",
 };
 
-// foodType display label → backend value
+// foodType display label → backend value. A pure-veg restaurant gets VEG only.
 const FOOD_TYPE_OPTIONS = [
   { label: "VEG",     value: "veg" },
   { label: "NON-VEG", value: "non_veg" },
-  { label: "EGG",     value: "egg" },
 ];
 
 export default function MenuManagement() {
-  const { restaurantId, approvalStatus, isApproved } = useOwnerAuth();
+  const { restaurantId, approvalStatus, isApproved, restaurant } = useOwnerAuth();
+  const pureVeg = !!restaurant?.isPureVeg;
+  const foodTypes = pureVeg ? FOOD_TYPE_OPTIONS.filter((o) => o.value === "veg") : FOOD_TYPE_OPTIONS;
 
   const { data: currentItems = [], isLoading } = useMenuItems(restaurantId);
   const { data: categoryList = [] }            = useCategories(restaurantId);
@@ -135,8 +136,6 @@ export default function MenuManagement() {
   const toggleMutation         = useToggleMenuItem(restaurantId);
 
   const [item, setItem] = useState(EMPTY_ITEM);
-  const [ingredients, setIngredients]   = useState([]);
-  const [newIngredient, setNewIngredient] = useState("");
   const [imageFile, setImageFile]       = useState(null);
   const [imageError, setImageError]     = useState("");
   const [dragging, setDragging]         = useState(false);
@@ -166,17 +165,6 @@ export default function MenuManagement() {
     });
   }, [currentItems, listSearch, listCategory, listStatus]);
 
-  function addIngredient() {
-    const value = newIngredient.trim();
-    if (!value) return;
-    setIngredients((list) => (list.includes(value) ? list : [...list, value]));
-    setNewIngredient("");
-  }
-
-  function removeIngredient(value) {
-    setIngredients((list) => list.filter((i) => i !== value));
-  }
-
   function pickImage(file) {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -190,45 +178,49 @@ export default function MenuManagement() {
   function resetForm() {
     setImageError("");
     setItem(EMPTY_ITEM);
-    setIngredients([]);
-    setNewIngredient("");
     setImageFile(null);
   }
 
-  // POST/PATCH /menu-items are multipart/form-data. `ingredients` goes over the
-  // wire as a JSON array string, per the documented field list.
+  // POST/PATCH /menu-items are multipart/form-data.
   async function handleSubmit() {
     setStatusMsg("");
     const name = item.name.trim();
     if (!name || !item.categoryId || !item.sellingPrice) {
-      setStatusMsg("Name, category and price are required.");
+      setStatusMsg("Name, category and full plate price are required.");
       return;
     }
     if (name.length > ITEM_NAME_MAX) {
       setStatusMsg(`Item name must be at most ${ITEM_NAME_MAX} characters.`);
       return;
     }
-    const mrp = Number(item.sellingPrice);
-    const discounted = item.discountedPrice === "" || item.discountedPrice == null ? null : Number(item.discountedPrice);
-    if (!(mrp > 0)) {
-      setStatusMsg("Selling price must be a positive amount.");
+    const full = Number(item.sellingPrice);
+    const half = item.halfPlatePrice === "" || item.halfPlatePrice == null ? null : Number(item.halfPlatePrice);
+    if (!(full > 0)) {
+      setStatusMsg("Full plate price must be a positive amount.");
       return;
     }
-    if (discounted != null && !(discounted > 0 && discounted <= mrp)) {
-      setStatusMsg("Discounted price must be more than ₹0 and not above the selling price (MRP).");
+    if (half != null && !(half > 0 && half < full)) {
+      setStatusMsg("Half plate price must be more than ₹0 and less than the full plate price.");
+      return;
+    }
+    const packaging = item.packagingCharge === "" || item.packagingCharge == null ? 0 : Number(item.packagingCharge);
+    if (!(packaging >= 0 && packaging <= 500)) {
+      setStatusMsg("Packaging charge must be ₹0 to ₹500.");
       return;
     }
     const formData = new FormData();
     formData.append("name", name);
     formData.append("description", item.description ?? "");
     formData.append("sellingPrice", String(item.sellingPrice));
-    // Always sent — an empty value is how removing a discount reaches the server; when it was
-    // only sent if set, clearing it on an edit left the old discount in place.
-    formData.append("discountedPrice", discounted == null ? "" : String(discounted));
+    // Always sent: an empty value is how removing a half plate (or an old discount, which the
+    // form no longer offers) reaches the server on an edit.
+    formData.append("halfPlatePrice", half == null ? "" : String(half));
+    formData.append("discountedPrice", "");
+    formData.append("packagingCharge", String(packaging));
+    formData.append("availableOnline", item.availableOnline ? "true" : "false");
     formData.append("categoryId", item.categoryId);
-    formData.append("foodType", item.foodType);
+    formData.append("foodType", pureVeg ? "veg" : item.foodType);
     formData.append("prepTime", String(item.prepTime));
-    formData.append("ingredients", JSON.stringify(ingredients));
     if (imageFile) formData.append("image", imageFile);
     try {
       if (item._id) await updateMutation.mutateAsync({ itemId: item._id, formData });
@@ -249,12 +241,14 @@ export default function MenuManagement() {
       name:            existing.name ?? "",
       description:     existing.description ?? "",
       prepTime:        existing.prepTime ?? 20,
-      sellingPrice:    existing.sellingPrice ?? "",
-      discountedPrice: existing.discountedPrice ?? "",
+      // An item saved with an old discounted price keeps charging that price as its full plate.
+      sellingPrice:    existing.discountedPrice ?? existing.sellingPrice ?? "",
+      halfPlatePrice:  existing.halfPlatePrice ?? "",
+      packagingCharge: existing.packagingCharge ? String(existing.packagingCharge) : "",
+      availableOnline: existing.availableOnline !== false,
       categoryId:      existing.categoryId ?? "",
       foodType:        existing.foodType ?? "veg",
     });
-    setIngredients(existing.ingredients ?? []);
     setImageFile(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -442,7 +436,7 @@ export default function MenuManagement() {
           <div className="space-y-2">
             <Label>Food Type</Label>
             <div className="flex flex-wrap gap-2">
-              {FOOD_TYPE_OPTIONS.map(({ label, value }) => (
+              {foodTypes.map(({ label, value }) => (
                 <button
                   key={value}
                   type="button"
@@ -463,81 +457,52 @@ export default function MenuManagement() {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="menu-selling-price-mrp">Selling Price (MRP)</Label>
-              <RupeeInput id="menu-selling-price-mrp"
+              <Label htmlFor="menu-full-plate-price">Full Plate Price</Label>
+              <RupeeInput id="menu-full-plate-price"
                 value={item.sellingPrice}
                 onChange={(e) => setItem((i) => ({ ...i, sellingPrice: e.target.value }))}
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="menu-discounted-price">Discounted Price</Label>
-              <RupeeInput id="menu-discounted-price"
-                value={item.discountedPrice}
-                onChange={(e) => setItem((i) => ({ ...i, discountedPrice: e.target.value }))}
+              <Label htmlFor="menu-half-plate-price">Half Plate Price</Label>
+              <RupeeInput id="menu-half-plate-price"
+                value={item.halfPlatePrice}
+                onChange={(e) => setItem((i) => ({ ...i, halfPlatePrice: e.target.value }))}
                 placeholder="Optional"
               />
               <p className="text-xs text-muted-foreground">
-                When set, guests are charged this instead of the MRP.
+                Leave empty if the dish comes in one size. When set, guests choose Half or Full.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="menu-packaging-charge">Packaging Charge</Label>
+              <RupeeInput id="menu-packaging-charge"
+                value={item.packagingCharge}
+                onChange={(e) => setItem((i) => ({ ...i, packagingCharge: e.target.value }))}
+                placeholder="0"
+              />
+              <p className="text-xs text-muted-foreground">
+                Per plate, on delivery and takeaway orders only — never on dine-in.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="menu-available-online">Available Online</Label>
+              <div className="flex items-center gap-3 rounded-lg border border-input px-3 py-2">
+                <Switch
+                  id="menu-available-online"
+                  checked={item.availableOnline}
+                  onCheckedChange={(on) => setItem((i) => ({ ...i, availableOnline: on }))}
+                />
+                <span className="text-sm">{item.availableOnline ? "On the delivery app" : "Dine-in only"}</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Off: hidden from the delivery app; still on the table QR menu and the waiter app.
               </p>
             </div>
           </div>
 
         </CardContent>
       </Card>
-
-      {/* Ingredients — the API stores a simple string list per item. */}
-      <Card>
-        <CardHeader className="pb-4">
-          <h2 className="text-base font-bold">Ingredients</h2>
-          <p className="text-xs text-muted-foreground">
-            Shown to guests on the item page. Saved with the item.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {ingredients.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No ingredients listed yet.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {ingredients.map((ing) => (
-                <span
-                  key={ing}
-                  className="flex items-center gap-1.5 rounded-full bg-brand-cream/40 px-3 py-1.5 text-sm capitalize text-[#5a403e]"
-                >
-                  {ing}
-                  <button
-                    type="button"
-                    onClick={() => removeIngredient(ing)}
-                    className="text-muted-foreground hover:text-brand-maroon"
-                    aria-label={`Remove ${ing}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <Input
-              value={newIngredient}
-              onChange={(e) => setNewIngredient(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") { e.preventDefault(); addIngredient(); }
-              }}
-              placeholder="e.g. Basmati Rice"
-              className="max-w-xs"
-            />
-            <Button
-              type="button"
-              onClick={addIngredient}
-              className="bg-brand-orange text-white hover:bg-brand-orange/90"
-            >
-              Add
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
 
       {/* Footer actions */}
       <div className="flex items-center justify-end gap-3">
@@ -632,7 +597,17 @@ export default function MenuManagement() {
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex flex-col">
-                  <span className="font-bold text-brand-red">₹{mi.effectivePrice ?? mi.discountedPrice ?? mi.sellingPrice}</span>
+                  <span className="font-bold text-brand-red">
+                    {mi.halfPlatePrice != null ? `Half ₹${mi.halfPlatePrice} · Full ` : ""}₹{mi.effectivePrice ?? mi.discountedPrice ?? mi.sellingPrice}
+                  </span>
+                  {mi.packagingCharge ? (
+                    <span className="text-[11px] text-muted-foreground">+ ₹{mi.packagingCharge} packing</span>
+                  ) : null}
+                  {mi.availableOnline === false ? (
+                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                      Dine-in only
+                    </span>
+                  ) : null}
                   <span className="text-xs text-muted-foreground">{mi.prepTime ? `${mi.prepTime} min` : ""}</span>
                 </div>
                 <div className="flex items-center gap-2">

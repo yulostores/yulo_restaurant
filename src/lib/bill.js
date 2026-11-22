@@ -9,6 +9,15 @@
 // Nothing here invents a figure. Every amount comes from `bill.charges`, which the server
 // computes from the restaurant's own configured GST and service-charge percentages.
 
+// A charge line's amount as printed: a discount as "−₹x", the round-off signed both ways
+// ("+₹0.50" rounded up, "−₹0.30" rounded down), everything else plain.
+export function chargeValueText(line) {
+  if (line.key === "round_off" && line.value) {
+    return `${line.value > 0 ? "+" : "−"}${formatMoney(Math.abs(line.value))}`;
+  }
+  return line.tone === "credit" ? `−${formatMoney(Math.abs(line.value))}` : formatMoney(line.value);
+}
+
 export function formatMoney(value) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -136,7 +145,8 @@ function legacyChargeLines(bill) {
   if (c.serviceChargeAmount) {
     lines.push({
       key: "service",
-      label: `Service charge (${c.serviceChargePercent}%)`,
+      // A fixed ₹ per bill now; older bills carried a % — shown when there is one.
+      label: c.serviceChargePercent ? `Service charge (${c.serviceChargePercent}%)` : "Service charge",
       value: c.serviceChargeAmount,
     });
   }

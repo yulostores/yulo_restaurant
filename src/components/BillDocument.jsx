@@ -18,6 +18,7 @@ import {
   formatMoney,
   formatTime,
   humanize,
+  chargeValueText,
   paymentSummary,
   placedByLabel,
 } from "@/lib/bill";
@@ -238,9 +239,7 @@ export function BillCharges({ bill, className }) {
             {line.sublabel ? <span className="block text-[11px]">{line.sublabel}</span> : null}
           </span>
           <span className={cn("font-medium", line.tone === "credit" && "text-brand-green")}>
-            {line.tone === "credit"
-              ? `−${formatMoney(Math.abs(line.value))}`
-              : formatMoney(line.value)}
+            {chargeValueText(line)}
           </span>
         </div>
       ))}

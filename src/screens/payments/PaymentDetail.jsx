@@ -313,6 +313,12 @@ function Detail({ data: d }) {
                   label={line.label}
                   sub={splitSub(line)}
                   amountPaise={line.amountPaise}
+                  // Round off reads "+₹0.50" (rounded up) or "−₹0.30" (rounded down).
+                  value={
+                    line.key === "roundOff" && line.amountPaise
+                      ? `${line.amountPaise > 0 ? "+" : "−"}${rupees(Math.abs(line.amountPaise))}`
+                      : undefined
+                  }
                 />
               ))}
               {d.customerBill.paidAmountPaise != null ? (
