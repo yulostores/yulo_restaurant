@@ -315,7 +315,7 @@ function Detail({ data: d }) {
                   amountPaise={line.amountPaise}
                   // Round off reads "+₹0.50" (rounded up) or "−₹0.30" (rounded down).
                   value={
-                    line.key === "roundOff" && line.amountPaise
+                    (line.key === "roundOff" || line.key === "round_off") && line.amountPaise
                       ? `${line.amountPaise > 0 ? "+" : "−"}${rupees(Math.abs(line.amountPaise))}`
                       : undefined
                   }
