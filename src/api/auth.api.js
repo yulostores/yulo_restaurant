@@ -7,7 +7,7 @@ import client, { assertPortal } from "./client";
 //
 //   Customer        POST /api/auth/login
 //   Restaurant owner POST /api/owner/auth/login
-//   Staff (OTP)     POST /api/staff/auth/otp/send, then /otp/verify
+//   Staff (PIN)     POST /api/staff/auth/login
 //
 // The platform admin portal is a separate app (yulo_super_admin) and is not
 // served from this client.
@@ -44,8 +44,8 @@ export const authApi = {
   // ── Restaurant owner ────────────────────────────────────────────────────
   ownerSignup: ({ name, email, password, phone }) =>
     client.post("/owner/auth/signup", { name, email, password, phone }),
-  ownerLogin: ({ email, password }) =>
-    client.post("/owner/auth/login", { email, password }),
+  ownerLogin: ({ phone, password }) =>
+    client.post("/owner/auth/login", { phone, password }),
   ownerLogout: () => client.post("/owner/auth/logout"),
 
   // ── Staff (phone + OTP) ─────────────────────────────────────────────────
@@ -62,12 +62,9 @@ export const authApi = {
       params: { q, ...(lat != null && lng != null ? { lat, lng } : {}) },
       signal,
     }),
-  // Same answer whether or not the number is staff here. `otpBypass` is set while the
-  // server runs without SMS (any 6-digit code works), `devOtp` in development only.
-  staffOtpSend: ({ restaurantId, phone }) =>
-    client.post("/staff/auth/otp/send", { restaurantId, phone }),
-  staffOtpVerify: ({ restaurantId, phone, code }) =>
-    client.post("/staff/auth/otp/verify", { restaurantId, phone, code }),
+  // Phone + the 4-digit PIN the owner set in Staff Management.
+  staffLogin: ({ restaurantId, phone, pin }) =>
+    client.post("/staff/auth/login", { restaurantId, phone, pin }),
   // Re-validates the localStorage token on boot: it outlives deactivation and
   // restaurant suspension, so the cached profile alone is not proof of a session.
   staffSession: () => client.get("/staff/auth/me", { _staff: true }),

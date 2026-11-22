@@ -4,6 +4,9 @@ import {
   Check,
   ChefHat,
   Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
   Pencil,
   Phone,
   Smartphone,
@@ -28,11 +31,14 @@ const ROLES = [
   { value: "chef",   label: "Chef",   hint: "Kitchen display" },
 ];
 
-const EMPTY_FORM = { name: "", role: "waiter", phone: "", email: "" };
+const EMPTY_FORM = { name: "", role: "waiter", phone: "", pin: "" };
 
-// Staff sign in at /staff/login with this phone number and a one-time code sent to it
-// (API.md — Staff Authentication). There is no PIN to hand over any more.
-const PHONE_HINT = "They sign in with this number — a one-time code is texted to it.";
+// Staff sign in at /staff/login with this phone number and the 4-digit PIN set here. The
+// owner can look the PIN up and change it on the member's card at any time.
+const PHONE_HINT = "They sign in with this number and the PIN below.";
+const PIN_RE = /^\d{4}$/;
+const randomPin = () => String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+const digitsOnly4 = (v) => v.replace(/\D/g, "").slice(0, 4);
 
 function phoneError(err) {
   if (err?.code === "PHONE_TAKEN") return "Another active staff member here already uses this number.";
@@ -90,12 +96,16 @@ export default function StaffManagement() {
       setFormError("Enter the staff member's 10-digit mobile number — it's how they sign in.");
       return;
     }
+    if (!PIN_RE.test(form.pin)) {
+      setFormError("Set a 4-digit PIN — they sign in with it.");
+      return;
+    }
     try {
       const { data } = await createMutation.mutateAsync({
         name:  form.name.trim(),
         role:  form.role,
         phone,
-        email: form.email.trim() || undefined,
+        pin:   form.pin,
       });
       setIssued(data.data.staff);
       setForm(EMPTY_FORM);
@@ -128,6 +138,14 @@ export default function StaffManagement() {
       );
     } finally {
       setDeactivating(null);
+    }
+  }
+
+  async function handleSavePin(member, pin) {
+    try {
+      await updateMutation.mutateAsync({ staffId: member._id, pin });
+    } catch (err) {
+      throw new Error(errorMessage(err, "Couldn't save the PIN. Please try again."));
     }
   }
 
@@ -174,8 +192,8 @@ export default function StaffManagement() {
           <a href="/staff/login" className="font-semibold text-primary hover:underline">
             /staff/login
           </a>{" "}
-          with that number and a one-time code texted to it — no PIN or password to share.
-          Each sign-in lasts 24 hours.
+          with that number and the 4-digit PIN you set. You can see and change a PIN on the
+          member&apos;s card any time. Each sign-in lasts 24 hours.
         </p>
       </div>
 
@@ -247,16 +265,29 @@ export default function StaffManagement() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="staff-new-email-optional" className="text-sm font-medium">Email (optional)</label>
-              <input id="staff-new-email-optional"
-                name="email"
-                type="email"
-                value={form.email}
-                onChange={handleChange}
-                placeholder="For your records only"
-                disabled={!canManage}
-                className="rounded-xl border border-border px-3 py-2 text-sm outline-none focus:border-primary disabled:cursor-not-allowed"
-              />
+              <label htmlFor="staff-new-pin" className="text-sm font-medium">4-digit PIN *</label>
+              <div className="flex gap-2">
+                <input id="staff-new-pin"
+                  name="pin"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={form.pin}
+                  onChange={(e) => setForm((prev) => ({ ...prev, pin: digitsOnly4(e.target.value) }))}
+                  placeholder="e.g. 4821"
+                  required
+                  disabled={!canManage}
+                  className="w-24 rounded-xl border border-border px-3 py-2 text-center font-mono text-sm tracking-[0.3em] outline-none focus:border-primary disabled:cursor-not-allowed"
+                />
+                <button
+                  type="button"
+                  disabled={!canManage}
+                  onClick={() => setForm((prev) => ({ ...prev, pin: randomPin() }))}
+                  className="rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-muted disabled:opacity-50"
+                >
+                  Generate
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">Share it with them — you can view or change it later.</p>
             </div>
 
             {formError && (
@@ -280,7 +311,7 @@ export default function StaffManagement() {
         <div className="flex items-start gap-2.5 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
-            Staff now sign in with their phone number instead of a PIN. Members marked{" "}
+            Staff sign in with their phone number and a PIN. Members marked{" "}
             <strong>No phone</strong> below can&apos;t sign in until you add their number.
           </p>
         </div>
@@ -306,6 +337,7 @@ export default function StaffManagement() {
             onToggle={handleToggleActive}
             onRemove={setRemoving}
             onSavePhone={handleSavePhone}
+            onSavePin={handleSavePin}
             updatePending={updateMutation.isPending}
             removePending={removeMutation.isPending}
           />
@@ -318,6 +350,7 @@ export default function StaffManagement() {
             onToggle={handleToggleActive}
             onRemove={setRemoving}
             onSavePhone={handleSavePhone}
+            onSavePin={handleSavePin}
             updatePending={updateMutation.isPending}
             removePending={removeMutation.isPending}
           />
@@ -350,7 +383,7 @@ export default function StaffManagement() {
   );
 }
 
-function StaffSection({ icon, title, members, emptyText, onToggle, onRemove, onSavePhone, updatePending, removePending }) {
+function StaffSection({ icon, title, members, emptyText, onToggle, onRemove, onSavePhone, onSavePin, updatePending, removePending }) {
   return (
     <section>
       <h2 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
@@ -367,6 +400,7 @@ function StaffSection({ icon, title, members, emptyText, onToggle, onRemove, onS
               onToggle={onToggle}
               onRemove={onRemove}
               onSavePhone={onSavePhone}
+              onSavePin={onSavePin}
               updatePending={updatePending}
               removePending={removePending}
             />
@@ -401,7 +435,97 @@ function PhoneInput({ id, value, onChange, disabled, autoFocus }) {
   );
 }
 
-function StaffCard({ member, onToggle, onRemove, onSavePhone, updatePending, removePending }) {
+// The member's PIN: hidden until the owner reveals it; changed in place. A new PIN signs
+// them out everywhere (the server ends their sessions).
+function PinRow({ member, onSavePin }) {
+  const [shown, setShown] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save(e) {
+    e.preventDefault();
+    if (!PIN_RE.test(draft)) {
+      setError("Enter 4 digits.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSavePin(member, draft);
+      setEditing(false);
+      setShown(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <form onSubmit={save} className="mt-1.5 flex flex-wrap items-center gap-2">
+        <input
+          aria-label={`New PIN for ${member.name}`}
+          inputMode="numeric"
+          maxLength={4}
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(digitsOnly4(e.target.value))}
+          className="w-20 rounded-lg border border-border px-2 py-1 text-center font-mono text-sm tracking-[0.3em] outline-none focus:border-primary"
+        />
+        <button type="button" onClick={() => setDraft(randomPin())} className="text-xs font-semibold text-primary hover:underline">
+          Generate
+        </button>
+        <Button type="submit" size="sm" disabled={saving}>{saving ? "Saving…" : "Save PIN"}</Button>
+        <button type="button" onClick={() => setEditing(false)} className="text-xs text-muted-foreground hover:underline">
+          Cancel
+        </button>
+        <span className="w-full text-[11px] text-muted-foreground">They&apos;ll be signed out and use the new PIN next time.</span>
+        {error ? <span className="w-full text-[11px] text-red-600">{error}</span> : null}
+      </form>
+    );
+  }
+
+  return (
+    <p className="mt-1 flex items-center gap-1.5 text-sm">
+      <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
+      {member.pin ? (
+        <>
+          <span className="font-mono tracking-[0.3em]">{shown ? member.pin : "••••"}</span>
+          <button
+            type="button"
+            onClick={() => setShown((v) => !v)}
+            aria-label={shown ? `Hide ${member.name}'s PIN` : `Show ${member.name}'s PIN`}
+            className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {shown ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+          </button>
+        </>
+      ) : (
+        <span className="rounded bg-amber-50 px-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">
+          No PIN — set one so they can sign in
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          setDraft("");
+          setError("");
+          setEditing(true);
+        }}
+        title="Change PIN"
+        aria-label={`Change ${member.name}'s PIN`}
+        className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        <Pencil className="h-3 w-3" />
+      </button>
+    </p>
+  );
+}
+
+function StaffCard({ member, onToggle, onRemove, onSavePhone, onSavePin, updatePending, removePending }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -454,9 +578,6 @@ function StaffCard({ member, onToggle, onRemove, onSavePhone, updatePending, rem
       <div className="flex items-start justify-between">
         <div className="min-w-0">
           <p className="truncate font-semibold">{member.name}</p>
-          {member.email && (
-            <p className="truncate text-xs text-muted-foreground">{member.email}</p>
-          )}
           {!editing &&
             (member.phone ? (
               <p className="mt-1 flex items-center gap-1.5 text-sm">
@@ -481,6 +602,7 @@ function StaffCard({ member, onToggle, onRemove, onSavePhone, updatePending, rem
                 <AlertTriangle className="h-3 w-3" /> No phone — add one so they can sign in
               </button>
             ))}
+          {!editing && <PinRow member={member} onSavePin={onSavePin} />}
           {/* Short display id (W01, C02) — handy for rosters; not a login credential any more. */}
           {member.staffCode && <CopyableCode value={member.staffCode} />}
           <div className="mt-2 flex items-center gap-2">
@@ -601,7 +723,7 @@ function SignInHandover({ issued, onDismiss }) {
   const loginUrl = `${window.location.origin}/staff/login`;
   const message =
     `Hi ${issued.name}, you've been added as ${issued.role === "chef" ? "a chef" : "a waiter"}. ` +
-    `Sign in at ${loginUrl} with your number ${formatPhone(issued.phone)} — we'll text you a code.`;
+    `Sign in at ${loginUrl} with your number ${formatPhone(issued.phone)} and PIN ${issued.pin}.`;
 
   return (
     <div className="rounded-2xl border border-brand-green/30 bg-[#F1F8F2] p-4">
@@ -615,8 +737,8 @@ function SignInHandover({ issued, onDismiss }) {
               {issued.name} can now sign in
             </p>
             <p className="mt-0.5 text-xs text-[#3f6b42]">
-              At /staff/login with +91 {formatPhone(issued.phone)} — a one-time code is texted
-              to that number. Nothing else to hand over.
+              At /staff/login with +91 {formatPhone(issued.phone)} and PIN{" "}
+              <span className="font-mono font-bold">{issued.pin}</span>.
             </p>
           </div>
         </div>

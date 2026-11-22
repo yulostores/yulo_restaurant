@@ -202,7 +202,17 @@ export default function BankAccountForm({
     e.preventDefault();
     setSubmitted(true);
     setServerErrors({});
-    if (Object.keys(errors).length > 0) return;
+    // The proof is mandatory: Yulo verifies the account against it. A proof already on file
+    // counts unless it was rejected.
+    const proofMissing = !proofFile && (!proofDoc || proofDoc.status === "rejected");
+    if (proofMissing) {
+      setProofError(
+        proofDoc?.status === "rejected"
+          ? "Your proof was rejected — upload a new cancelled cheque or bank statement"
+          : "Upload a cancelled cheque or bank statement — it is required",
+      );
+    }
+    if (Object.keys(errors).length > 0 || proofMissing) return;
     setConfirming(true);
   }
 
@@ -261,6 +271,7 @@ export default function BankAccountForm({
     } catch (err) {
       const fieldErrors = serverFieldErrors(err);
       if (Object.keys(fieldErrors).length > 0) setServerErrors(fieldErrors);
+      if (fieldErrors.proof) setProofError(fieldErrors.proof);
       toast.error(
         err.code === "ENCRYPTION_NOT_CONFIGURED"
           ? "Bank details can't be saved right now. Please try again later or contact Yulo support."
@@ -439,7 +450,9 @@ export default function BankAccountForm({
 
           {/* Proof — the document Yulo checks the account against. */}
           <div className="sm:col-span-2">
-            <p className="text-xs font-semibold">Proof of account</p>
+            <p className="text-xs font-semibold">
+              Proof of account <span className="text-[#b3421e]">*</span>
+            </p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               A cancelled cheque or a recent statement showing the account
               number and holder name. JPG, PNG, WebP or PDF, up to 5 MB.

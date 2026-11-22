@@ -134,7 +134,7 @@ export default function QrManagement() {
 
   const codes = tables.map((t) => ({
     id:          t._id,
-    label:       `Table ${t.identifier}`,
+    label:       String(t.identifier),
     qrImageUrl:  t.qrCode?.imageUrl ?? "",
     link:        t.qrCode?.url ?? "",
     active:      t.qrCode?.status === "active",
@@ -159,7 +159,7 @@ export default function QrManagement() {
       if (qr) {
         setGenerated({
           id:         table._id,
-          label:      `Table ${table.identifier}`,
+          label:      String(table.identifier),
           qrImageUrl: qr.imageUrl,
           link:       qr.url,
         });
@@ -226,7 +226,7 @@ export default function QrManagement() {
               <form onSubmit={generate} className="space-y-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="qr-table-number" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Table Number / Identifier
+                    QR Name
                   </Label>
                   <Input
                     id="qr-table-number"

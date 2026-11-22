@@ -176,8 +176,8 @@ export function OwnerAuthProvider({ children }) {
     [],
   );
 
-  const login = useCallback(async ({ email, password }) => {
-    const { data } = await authApi.ownerLogin({ email, password });
+  const login = useCallback(async ({ phone, password }) => {
+    const { data } = await authApi.ownerLogin({ phone, password });
     const { user: u, accessToken } = data.data;
     setAccessToken("owner", accessToken);
     setUser(u);

@@ -96,9 +96,13 @@ export default function Profile() {
       : form.name.trim().length > MAX_NAME_LENGTH
         ? `Name must be at most ${MAX_NAME_LENGTH} characters`
         : "";
-  // Same rule as the server (controllers/user.controller.js); blank removes the number.
-  const phoneError =
-    form.phone.trim() && !/^\d{10}$/.test(form.phone.trim()) ? "Enter a valid 10-digit phone number" : "";
+  // Same rule as the server (controllers/user.controller.js). The owner signs in with this
+  // number, so it can be changed but not left blank.
+  const phoneError = !/^\d{10}$/.test(form.phone.trim())
+    ? form.phone.trim()
+      ? "Enter a valid 10-digit phone number"
+      : "Your mobile number is your login and can't be removed"
+    : "";
 
   const dirty = useMemo(() => {
     if (avatarFile) return true;
@@ -269,7 +273,7 @@ export default function Profile() {
               ) : null}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="profile-phone">Phone</Label>
+              <Label htmlFor="profile-phone">Mobile number (used to sign in)</Label>
               <Input
                 id="profile-phone"
                 type="tel"

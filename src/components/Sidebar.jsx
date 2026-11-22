@@ -23,7 +23,6 @@ import {
 
 import ConfirmDialog from "@/components/ConfirmDialog";
 
-import RestaurantLogo from "@/components/RestaurantLogo";
 import { cn } from "@/lib/utils";
 import { useOwnerAuth } from "@/context/OwnerAuthContext";
 import { isAlwaysAllowed } from "@/lib/approval";
@@ -124,9 +123,6 @@ export default function Sidebar({ isOpen, onClose }) {
   // Same polled query as the Incoming Orders page and the alert strip (one request).
   const { data: pending } = usePendingOrders(restaurantId, { enabled: isApproved });
   const badges = { pending: pending?.count ?? 0 };
-  // Falls back to the product name only until the owner has a restaurant on file
-  // (fresh signup, pre-approval) — otherwise the sidebar carries their own brand.
-  const storeName = restaurant?.name || "Yulo Stores";
 
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -168,8 +164,29 @@ export default function Sidebar({ isOpen, onClose }) {
         <div>
           <div className="flex items-center justify-between gap-3 px-6 pb-6 pt-6">
             <div className="flex min-w-0 items-center gap-3">
-              <RestaurantLogo name={storeName} src={restaurant?.logo} className="h-10 w-10" />
-              <span className="truncate text-xl text-brand-cream2">{storeName}</span>
+              {/* The platform's brand, not the restaurant's — the store's own name and logo
+                  are in the top bar. */}
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-gradient text-white">
+                <Store className="h-5 w-5" />
+              </span>
+              <span className="min-w-0 leading-tight">
+                <span className="block truncate text-xl font-bold text-brand-cream2">
+                  Yulo<span className="text-[#F2A65A]">Stores</span>
+                </span>
+                <span className="flex items-center gap-1 text-[11px] text-brand-cream/60">
+                  <span className="truncate">Restaurant Partner</span>
+                  {/* Approved: just a green tick — the locked states below explain themselves. */}
+                  {isApproved ? (
+                    <CheckCircle2
+                      className="h-3.5 w-3.5 shrink-0 text-[#4ADE80]"
+                      aria-label="Approved"
+                      role="img"
+                    >
+                      <title>Approved</title>
+                    </CheckCircle2>
+                  ) : null}
+                </span>
+              </span>
             </div>
             <button
               type="button"
@@ -181,17 +198,9 @@ export default function Sidebar({ isOpen, onClose }) {
             </button>
           </div>
 
-          {/* The approval state is on screen either way: locked owners get the
-              explainer, approved ones a one-line confirmation. Showing nothing at
-              all once approved left the status invisible everywhere in the portal. */}
-          {isApproved ? (
-            <div className="mx-4 mb-4 flex items-center gap-1.5 rounded-lg border border-[#6FBF87]/30 bg-[#6FBF87]/10 px-3 py-2">
-              <CheckCircle2 className="h-3 w-3 shrink-0 text-[#9BE0AF]" />
-              <p className="text-[11px] font-bold uppercase tracking-wide text-[#9BE0AF]">
-                Approved
-              </p>
-            </div>
-          ) : (
+          {/* Locked owners get the explainer; an approved one just the green tick by the
+              brand name above. */}
+          {isApproved ? null : (
             <div className="mx-4 mb-4 rounded-lg border border-brand-cream/20 bg-brand-cream/10 px-3 py-2.5">
               <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-brand-cream/90">
                 <Lock className="h-3 w-3" />

@@ -189,15 +189,9 @@ export function StaffAuthProvider({ children }) {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // Step 1: ask for a code. Resolves with { otpBypass, devOtp } flags from the server.
-  const requestCode = useCallback(async ({ restaurantId, phone }) => {
-    const { data } = await authApi.staffOtpSend({ restaurantId, phone });
-    return data.data ?? {};
-  }, []);
-
-  // Step 2: exchange the code for the day's session.
-  const verifyCode = useCallback(async ({ restaurantId, phone, code }) => {
-    const { data } = await authApi.staffOtpVerify({ restaurantId, phone, code });
+  // Phone + PIN (both set by the owner) → the day's session.
+  const loginWithPin = useCallback(async ({ restaurantId, phone, pin }) => {
+    const { data } = await authApi.staffLogin({ restaurantId, phone, pin });
     const { staff: member, staffToken } = data.data;
     setStaffToken(staffToken);
     const profile = toProfile(member, localExpiry(data.data));
@@ -220,7 +214,7 @@ export function StaffAuthProvider({ children }) {
 
   return (
     <StaffAuthContext.Provider
-      value={{ staff, ready, sessionEnded, requestCode, verifyCode, logout, isAuthenticated: !!staff }}
+      value={{ staff, ready, sessionEnded, loginWithPin, logout, isAuthenticated: !!staff }}
     >
       {children}
     </StaffAuthContext.Provider>

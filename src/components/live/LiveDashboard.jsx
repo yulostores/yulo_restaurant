@@ -66,7 +66,7 @@ function HeaderStrip({ summary, metrics }) {
       value: summary?.cartsInProgress ?? 0,
       sub: formatPaise(summary?.cartsTotalPaise),
     },
-    { label: "Abandoned (last hour)", value: summary?.abandonedLastHour ?? 0 },
+    { label: "Abandoned (last 30 min)", value: summary?.abandonedLastHour ?? 0 },
     {
       label: "Offers today",
       value: metrics ? `${metrics.sent} sent → ${metrics.redeemed} used` : "—",

@@ -30,7 +30,7 @@ function validateSignup({ name, phone, password }) {
   const trimmed = name.trim();
   if (trimmed.length < NAME_MIN) errors.name = `Full name must be at least ${NAME_MIN} characters`;
   else if (trimmed.length > NAME_MAX) errors.name = `Full name must be at most ${NAME_MAX} characters`;
-  if (phone && !PHONE_RE.test(phone)) errors.phone = "Enter a valid 10-digit mobile number";
+  if (!PHONE_RE.test(phone)) errors.phone = "Enter a valid 10-digit mobile number";
   const pwErr = passwordError(password);
   if (pwErr) errors.password = pwErr;
   return errors;
@@ -63,21 +63,25 @@ export default function OwnerLoginPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-    if (mode === "signup") {
-      const errors = validateSignup(form);
-      setFieldErrors(errors);
-      if (Object.keys(errors).length) return;
-    }
+    // The mobile number is the login for both sign in and sign up.
+    const errors =
+      mode === "signup"
+        ? validateSignup(form)
+        : PHONE_RE.test(form.phone)
+          ? {}
+          : { phone: "Enter a valid 10-digit mobile number" };
+    setFieldErrors(errors);
+    if (Object.keys(errors).length) return;
     setLoading(true);
     try {
       if (mode === "login") {
-        await login({ email: form.email, password: form.password });
+        await login({ phone: form.phone, password: form.password });
       } else {
         await signup({
           name: form.name,
           email: form.email,
           password: form.password,
-          phone: form.phone || undefined,
+          phone: form.phone,
         });
       }
       navigate("/dashboard", { replace: true });
@@ -203,40 +207,42 @@ export default function OwnerLoginPage() {
                 </div>
               )}
 
-              {mode === "signup" && (
-                <div>
-                  <label htmlFor="owner-login-phone" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
-                    Phone (optional)
-                  </label>
-                  <input
-                    id="owner-login-phone"
-                    name="phone"
-                    value={form.phone}
-                    onChange={handleChange}
-                    placeholder="9876543210"
-                    inputMode="numeric"
-                    autoComplete="tel-national"
-                    className="w-full rounded-xl border border-[#F5DFCE] bg-[#FFFAF7] px-4 py-3 text-sm text-[#23180E] placeholder-[#c4aa96] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"
-                  />
-                  <FieldError message={fieldErrors.phone} />
-                </div>
-              )}
-
               <div>
-                <label htmlFor="owner-login-email" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
-                  Email
+                <label htmlFor="owner-login-phone" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
+                  Mobile Number
                 </label>
                 <input
-                  id="owner-login-email"
-                    name="email"
-                  type="email"
-                  value={form.email}
+                  id="owner-login-phone"
+                  name="phone"
+                  type="tel"
+                  value={form.phone}
                   onChange={handleChange}
-                  placeholder="owner@restaurant.com"
+                  placeholder="9876543210"
+                  inputMode="numeric"
+                  autoComplete="tel-national"
                   required
                   className="w-full rounded-xl border border-[#F5DFCE] bg-[#FFFAF7] px-4 py-3 text-sm text-[#23180E] placeholder-[#c4aa96] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"
                 />
+                <FieldError message={fieldErrors.phone} />
               </div>
+
+              {mode === "signup" && (
+                <div>
+                  <label htmlFor="owner-login-email" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">
+                    Email
+                  </label>
+                  <input
+                    id="owner-login-email"
+                    name="email"
+                    type="email"
+                    value={form.email}
+                    onChange={handleChange}
+                    placeholder="owner@restaurant.com"
+                    required
+                    className="w-full rounded-xl border border-[#F5DFCE] bg-[#FFFAF7] px-4 py-3 text-sm text-[#23180E] placeholder-[#c4aa96] outline-none transition focus:border-[#D9480F] focus:ring-1 focus:ring-[#D9480F]/30"
+                  />
+                </div>
+              )}
 
               <div>
                 <label htmlFor="owner-login-password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#7a6555]">

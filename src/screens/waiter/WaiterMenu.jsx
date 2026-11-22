@@ -13,16 +13,34 @@ import WaiterLayout, { formatPrice } from "./WaiterLayout";
 import { useWaiter } from "./WaiterApp";
 
 /* ── Flatten the category tree, tagging each item with its category ── */
+// A dish sold in half and full plates becomes two cards ("(Half)" / "(Full)") with their own
+// prices. The card id carries the size ("<itemId>:half") so each size is its own cart line;
+// placeOrder splits it back into { menuItemId, portion }.
+function withPortions(item, category) {
+  if (item.halfPlatePrice == null) return [{ ...item, category }];
+  const full = item.effectivePrice ?? item.discountedPrice ?? item.sellingPrice;
+  return [
+    { ...item, category, _id: `${item._id}:full`, name: `${item.name} (Full)`, effectivePrice: full },
+    { ...item, category, _id: `${item._id}:half`, name: `${item.name} (Half)`, effectivePrice: item.halfPlatePrice },
+  ];
+}
+
 function flattenMenu(categories = []) {
   const items = [];
   for (const cat of categories) {
     const catName = cat.name ?? "";
-    for (const item of cat.items ?? []) items.push({ ...item, category: catName });
+    for (const item of cat.items ?? []) items.push(...withPortions(item, catName));
     for (const sub of cat.subCategories ?? []) {
-      for (const item of sub.items ?? []) items.push({ ...item, category: catName });
+      for (const item of sub.items ?? []) items.push(...withPortions(item, catName));
     }
   }
   return items;
+}
+
+// Cart line id → what the order API takes.
+function orderLineOf(line) {
+  const [menuItemId, portion] = String(line.menuItemId).split(":");
+  return { menuItemId, quantity: line.quantity, ...(portion ? { portion } : {}) };
 }
 
 // The server's foodType vocabulary.
@@ -57,7 +75,6 @@ const FOOD_FILTERS = [
   { key: "all",     label: "All",     icon: <span className="h-2 w-2 rounded-full bg-white" /> },
   { key: "veg",     label: "Veg",     icon: <span className="h-2 w-2 rounded-full bg-green-500" /> },
   { key: "non_veg", label: "Non Veg", icon: <span className="h-2 w-2 rounded-full bg-brand-maroon" /> },
-  { key: "egg",     label: "Egg",     icon: <span className="h-2 w-2 rounded-full bg-yellow-400" /> },
 ];
 
 function matchesFoodFilter(item, key) {
@@ -232,10 +249,7 @@ export default function WaiterMenu() {
     try {
       await createOrder({
         tableSessionId: activeTable.sessionId,
-        items: cart.map((line) => ({
-          menuItemId: line.menuItemId,
-          quantity: line.quantity,
-        })),
+        items: cart.map(orderLineOf),
         ...(note.trim() ? { specialInstructions: note.trim() } : {}),
       });
       clearCart();
@@ -316,7 +330,7 @@ export default function WaiterMenu() {
 
         {/* Food type filter */}
         <div className="flex gap-2 overflow-x-auto px-4 py-2.5 sm:px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {FOOD_FILTERS.map((f) => (
+          {(restaurant?.isPureVeg ? FOOD_FILTERS.filter((f) => f.key !== "non_veg") : FOOD_FILTERS).map((f) => (
             <button
               key={f.key}
               type="button"

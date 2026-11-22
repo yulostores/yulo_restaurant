@@ -34,6 +34,10 @@ import { ownerApi } from "@/api/owner.api";
 import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
+// The bank proof (cancelled cheque / statement) is uploaded with the bank account itself, on
+// Payments → Bank & payout settings, where it is mandatory — not here.
+const COMPLIANCE_TYPES = DOCUMENT_TYPES.filter((d) => d.type !== "bank_statement");
+
 const STATUS_STYLES = {
   verified: {
     label: "Verified",
@@ -196,7 +200,7 @@ export default function ComplianceDocuments({ restaurantId, className }) {
   const byType = Object.fromEntries(documents.map((d) => [d.type, d]));
   const viewedDoc = viewingType ? byType[viewingType] : null;
   const viewedDefinition = viewingType
-    ? DOCUMENT_TYPES.find((d) => d.type === viewingType)
+    ? COMPLIANCE_TYPES.find((d) => d.type === viewingType)
     : null;
 
   // Stable across renders so the viewer doesn't refetch the file on every keystroke
@@ -207,8 +211,8 @@ export default function ComplianceDocuments({ restaurantId, className }) {
     [restaurantId, viewedDocId],
   );
 
-  const uploadedCount = DOCUMENT_TYPES.filter(({ type }) => byType[type]?.url).length;
-  const verifiedCount = DOCUMENT_TYPES.filter(
+  const uploadedCount = COMPLIANCE_TYPES.filter(({ type }) => byType[type]?.url).length;
+  const verifiedCount = COMPLIANCE_TYPES.filter(
     ({ type }) => byType[type]?.status === "verified",
   ).length;
 
@@ -262,7 +266,7 @@ export default function ComplianceDocuments({ restaurantId, className }) {
         </div>
         <p className="shrink-0 pl-3 text-right text-xs leading-tight text-muted-foreground">
           <span className="text-sm font-bold text-brand-dark">
-            {uploadedCount}/{DOCUMENT_TYPES.length}
+            {uploadedCount}/{COMPLIANCE_TYPES.length}
           </span>
           <br />
           uploaded
@@ -283,7 +287,7 @@ export default function ComplianceDocuments({ restaurantId, className }) {
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
-            {DOCUMENT_TYPES.map((definition) => {
+            {COMPLIANCE_TYPES.map((definition) => {
               const doc = byType[definition.type];
               return (
                 <DocumentRow
