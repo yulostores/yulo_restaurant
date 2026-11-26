@@ -29,6 +29,7 @@ import {
 } from "@/hooks/owner/useBills";
 import { useToast } from "@/components/Toaster";
 import BillDocument from "@/components/BillDocument";
+import BillsExport from "@/components/BillsExport";
 import ConfirmPaymentDialog from "@/components/ConfirmPaymentDialog";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
@@ -594,6 +595,8 @@ export default function BillDetails() {
       </div>
 
       <OpenTables restaurantId={restaurantId} onOpenBill={(id) => setSearchParams({ billId: id })} />
+
+      <BillsExport restaurantId={restaurantId} />
 
       {isError ? <p className="text-sm text-brand-maroon">Failed to load: {error.message}</p> : null}
 

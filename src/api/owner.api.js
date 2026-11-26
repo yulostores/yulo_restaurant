@@ -206,6 +206,15 @@ export const ownerApi = {
   listBills: (rId, params = {}) =>
     client.get(`/owner/${rId}/bills`, { params }),
   getBill: (rId, billId) => client.get(`/owner/${rId}/bills/${billId}`),
+  // Excel workbook of every bill raised from `from` to `to` (IST days, "YYYY-MM-DD"; `to`
+  // omitted = that one day). Resolves to { blob, filename }.
+  downloadBillsExcel: (rId, { from, to }) =>
+    client
+      .get(`/owner/${rId}/bills/export.xlsx`, {
+        params: { from, ...(to && to !== from ? { to } : {}) },
+        responseType: "blob",
+      })
+      .then(pdfFile),
   // Tables with an open sitting, and whether every round is served (so it can be billed).
   listOpenTables: (rId) => client.get(`/owner/${rId}/bills/open-tables`),
   generateBill: (rId, sessionId) => client.post(`/owner/${rId}/bills/sessions/${sessionId}/generate`, {}),
