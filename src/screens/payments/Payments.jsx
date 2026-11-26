@@ -58,6 +58,7 @@ import {
   Steps,
 } from "./parts";
 import { Button, Card, CardContent, CardHeader, PayScope } from "./ui";
+import { BalanceCards, DailyReport, PaymentsReceived } from "./Anytime";
 
 const PAGE_SIZE = 10;
 const ALL = "all";
@@ -137,6 +138,7 @@ function FilterSelect({ value, onChange, options, allLabel, className }) {
 // ── Overview ──────────────────────────────────────────────────────────────────
 
 function Overview({
+  restaurantId,
   data,
   statementId,
   onStatement,
@@ -146,57 +148,10 @@ function Overview({
   onPage,
   restaurantName,
 }) {
-  const statementOptions = data.statements.map((s) => ({
-    value: String(s.statementId),
-    label: periodLabel(s.period),
-  }));
-  const viewStatementId =
-    data.selectedStatementId ?? data.nextPayout?.statementId ?? null;
-
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        <FilterSelect
-          value={statementId ?? ALL}
-          onChange={(v) => onStatement(v === ALL ? null : v)}
-          options={statementOptions}
-          allLabel={periodLabel({
-            start: data.period?.start,
-            end: data.period?.end,
-          })}
-        />
-        {viewStatementId ? (
-          <Button asChild className="h-[38px] px-6">
-            <Link to={`/payments/statements/${viewStatementId}`}>
-              View statement &amp; payout
-            </Link>
-          </Button>
-        ) : null}
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <KpiCard
-          tone="accent"
-          label="Next payout"
-          value={rupees(data.nextPayout?.netPaise ?? 0)}
-          sub={nextPayoutSub(data.nextPayout, data.nextPayoutReason)}
-        />
-        <KpiCard
-          label="Still clearing"
-          value={rupees(data.stillClearing.amountPaise)}
-          sub={`Razorpay T+2 · ${data.stillClearing.orderCount} ${data.stillClearing.orderCount === 1 ? "order" : "orders"}`}
-        />
-        <KpiCard
-          tone="yulo"
-          label={
-            data.selectedStatementId
-              ? "Yulo money in this period"
-              : "Yulo money this week"
-          }
-          value={rupees(data.yuloMoney.amountPaise)}
-          sub="Customer-paid · outside payout"
-        />
-      </div>
+      {/* Yulo pays any day now — the balance owed replaces the weekly "Next payout". */}
+      <BalanceCards restaurantId={restaurantId} />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_300px]">
         <div className="space-y-3">
@@ -553,7 +508,8 @@ function EmptyState({ destination, restaurantName }) {
 export default function Payments() {
   const { restaurantId, restaurant } = useOwnerAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = searchParams.get("tab") === "history" ? "history" : "overview";
+  const TAB_KEYS = ["overview", "daily", "received", "history"];
+  const tab = TAB_KEYS.includes(searchParams.get("tab")) ? searchParams.get("tab") : "overview";
   const statementId = searchParams.get("statementId");
   const [status, setStatus] = useState(null);
   const [page, setPage] = useState(1);
@@ -569,7 +525,7 @@ export default function Payments() {
 
   function setTab(next) {
     const params = new URLSearchParams(searchParams);
-    if (next === "history") params.set("tab", "history");
+    if (next !== "overview") params.set("tab", next);
     else params.delete("tab");
     setSearchParams(params);
   }
@@ -613,7 +569,10 @@ export default function Payments() {
             >
               {[
                 { key: "overview", label: "Overview" },
-                { key: "history", label: "Payout history" },
+                { key: "daily", label: "Daily report" },
+                { key: "received", label: "Payments received" },
+                // Weekly statements from before Yulo paid any day — only when there are some.
+                ...(data.statements?.length ? [{ key: "history", label: "Weekly statements" }] : []),
               ].map((t) => (
                 <button
                   key={t.key}
@@ -632,7 +591,11 @@ export default function Payments() {
                 </button>
               ))}
             </div>
-            {tab === "history" ? (
+            {tab === "daily" ? (
+              <DailyReport restaurantId={restaurantId} />
+            ) : tab === "received" ? (
+              <PaymentsReceived restaurantId={restaurantId} />
+            ) : tab === "history" ? (
               <History
                 restaurantId={restaurantId}
                 restaurantName={restaurantName}
@@ -641,6 +604,7 @@ export default function Payments() {
               />
             ) : (
               <Overview
+                restaurantId={restaurantId}
                 data={data}
                 statementId={statementId}
                 onStatement={setStatement}

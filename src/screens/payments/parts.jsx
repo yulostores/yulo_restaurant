@@ -172,13 +172,14 @@ export function PayoutDestinationCard({ destination, restaurantName }) {
               </p>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              Weekly payout{restaurantName ? ` · ${restaurantName}` : ""}
+              {destination.frequency === "weekly" ? "Weekly payout" : "Paid by Yulo any day"}
+              {restaurantName ? ` · ${restaurantName}` : ""}
             </p>
           </>
         ) : (
           <>
             <p className="text-sm text-muted-foreground">
-              Add the bank account your weekly payouts should go to.
+              Add the bank account Yulo should pay you in.
             </p>
             <Link
               to="/payments/settings"

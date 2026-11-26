@@ -85,6 +85,14 @@ export const ownerApi = {
   // The masked account plus the next scheduled payout, as an admin scheduled it — the
   // portal never guesses a payout day.
   getPaymentSettings: (rId) => client.get(`/owner/${rId}/payments/settings`),
+  // Paid any day: balance owed, payments received, and the daily / range report.
+  getPaymentBalance: (rId) => client.get(`/owner/${rId}/payments/balance`),
+  getPaymentsReceived: (rId, params = {}) => client.get(`/owner/${rId}/payments/received`, { params }),
+  getDailyReport: (rId, params = {}) => client.get(`/owner/${rId}/payments/daily`, { params }),
+  downloadDailyReport: (rId, params = {}) =>
+    client
+      .get(`/owner/${rId}/payments/daily/export.xlsx`, { params, responseType: "blob" })
+      .then(pdfFile),
   // The Payments & Payouts screens (API.md → Owner — Payments & Payouts). Money in PAISE;
   // every status label and owner-facing sentence comes from the server.
   getPaymentsOverview: (rId, params) =>

@@ -134,3 +134,36 @@ export function pdfErrorMessage(err) {
     ? "The PDF isn't available yet. Use Download CSV for now."
     : "Couldn't download the PDF. Please try again.";
 }
+
+// ── Paid any day (GET /owner/:rId/payments/{balance, received, daily}) ─────────────────────
+
+export function usePaymentBalance(restaurantId) {
+  return useQuery({
+    queryKey: ["payments", restaurantId, "balance"],
+    queryFn: () => ownerApi.getPaymentBalance(restaurantId).then((r) => r.data.data),
+    enabled: !!restaurantId,
+    staleTime: 30_000,
+  });
+}
+
+export function usePaymentsReceived(restaurantId, params) {
+  const p = clean(params);
+  return useQuery({
+    queryKey: ["payments", restaurantId, "received", p],
+    queryFn: () => ownerApi.getPaymentsReceived(restaurantId, p).then((r) => r.data.data),
+    enabled: !!restaurantId,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+}
+
+export function useDailyReport(restaurantId, params) {
+  const p = clean(params);
+  return useQuery({
+    queryKey: ["payments", restaurantId, "daily", p],
+    queryFn: () => ownerApi.getDailyReport(restaurantId, p).then((r) => r.data.data),
+    enabled: !!restaurantId && !!p.from,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+}
