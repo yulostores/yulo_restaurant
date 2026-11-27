@@ -115,6 +115,9 @@ const EMPTY_ITEM = {
   sellingPrice: "", halfPlatePrice: "",
   packagingCharge: "", availableOnline: true,
   categoryId: "", foodType: "veg",
+  // GST-registered restaurants only: the dish's HSN / SAC code, and whether the price entered
+  // already includes GST ("With tax") or GST is added on top ("Without tax", the default).
+  hsnCode: "", priceIncludesGst: false,
 };
 
 // foodType display label → backend value. A pure-veg restaurant gets VEG only.
@@ -126,6 +129,8 @@ const FOOD_TYPE_OPTIONS = [
 export default function MenuManagement() {
   const { restaurantId, approvalStatus, isApproved, restaurant } = useOwnerAuth();
   const pureVeg = !!restaurant?.isPureVeg;
+  // GST fields show only for a restaurant registered for GST (Store Settings → Tax).
+  const gstRegistered = restaurant?.gstRegistered === true;
   const foodTypes = pureVeg ? FOOD_TYPE_OPTIONS.filter((o) => o.value === "veg") : FOOD_TYPE_OPTIONS;
 
   const { data: currentItems = [], isLoading } = useMenuItems(restaurantId);
@@ -208,6 +213,11 @@ export default function MenuManagement() {
       setStatusMsg("Packaging charge must be ₹0 to ₹500.");
       return;
     }
+    const hsn = String(item.hsnCode ?? "").replace(/\s/g, "");
+    if (gstRegistered && hsn && !/^\d{4,8}$/.test(hsn)) {
+      setStatusMsg("HSN / SAC code must be 4 to 8 digits.");
+      return;
+    }
     const formData = new FormData();
     formData.append("name", name);
     formData.append("description", item.description ?? "");
@@ -218,6 +228,10 @@ export default function MenuManagement() {
     formData.append("discountedPrice", "");
     formData.append("packagingCharge", String(packaging));
     formData.append("availableOnline", item.availableOnline ? "true" : "false");
+    if (gstRegistered) {
+      formData.append("hsnCode", hsn);
+      formData.append("priceIncludesGst", item.priceIncludesGst ? "true" : "false");
+    }
     formData.append("categoryId", item.categoryId);
     formData.append("foodType", pureVeg ? "veg" : item.foodType);
     formData.append("prepTime", String(item.prepTime));
@@ -246,6 +260,8 @@ export default function MenuManagement() {
       halfPlatePrice:  existing.halfPlatePrice ?? "",
       packagingCharge: existing.packagingCharge ? String(existing.packagingCharge) : "",
       availableOnline: existing.availableOnline !== false,
+      hsnCode:         existing.hsnCode ?? "",
+      priceIncludesGst: existing.priceIncludesGst === true,
       categoryId:      existing.categoryId ?? "",
       foodType:        existing.foodType ?? "veg",
     });
@@ -463,6 +479,41 @@ export default function MenuManagement() {
                 onChange={(e) => setItem((i) => ({ ...i, sellingPrice: e.target.value }))}
               />
             </div>
+            {gstRegistered ? (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="menu-price-tax">Price Is</Label>
+                  <select
+                    id="menu-price-tax"
+                    value={item.priceIncludesGst ? "with" : "without"}
+                    onChange={(e) => setItem((i) => ({ ...i, priceIncludesGst: e.target.value === "with" }))}
+                    className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm"
+                  >
+                    <option value="without">Without tax — GST is added on the bill</option>
+                    <option value="with">With tax — GST is included in this price</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    {item.priceIncludesGst
+                      ? "Guests pay exactly this price; the bill shows the GST inside it."
+                      : "GST is added on top of this price on the bill."}
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="menu-hsn-code">HSN / SAC Code</Label>
+                  <Input
+                    id="menu-hsn-code"
+                    inputMode="numeric"
+                    maxLength={8}
+                    placeholder="e.g. 996331"
+                    value={item.hsnCode}
+                    onChange={(e) => setItem((i) => ({ ...i, hsnCode: e.target.value.replace(/\D/g, "") }))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional. 4–8 digits — restaurant food service is usually SAC 996331.
+                  </p>
+                </div>
+              </>
+            ) : null}
             <div className="space-y-1.5">
               <Label htmlFor="menu-half-plate-price">Half Plate Price</Label>
               <RupeeInput id="menu-half-plate-price"
@@ -600,6 +651,9 @@ export default function MenuManagement() {
                   <span className="font-bold text-brand-red">
                     {mi.halfPlatePrice != null ? `Half ₹${mi.halfPlatePrice} · Full ` : ""}₹{mi.effectivePrice ?? mi.discountedPrice ?? mi.sellingPrice}
                   </span>
+                  {gstRegistered && mi.priceIncludesGst ? (
+                    <span className="text-[11px] text-muted-foreground">incl. GST</span>
+                  ) : null}
                   {mi.packagingCharge ? (
                     <span className="text-[11px] text-muted-foreground">+ ₹{mi.packagingCharge} packing</span>
                   ) : null}

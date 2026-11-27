@@ -425,6 +425,55 @@ function SelectField({ field, value, onChange, invalid }) {
 // and keyboard handling, and anything typed is still accepted. Snapping a typed entry to
 // the known spelling is what keeps the vocabulary from fragmenting — "north indian" is
 // stored the way the rest of the platform spells it rather than becoming a second cuisine.
+// A partnership's partners: one row per name, up to field.maxItems (4). Empty rows stay on
+// screen while typing but are never sent — the form value is the filled-in names only.
+function PartnerNamesEditor({ field, value, onChange, invalid }) {
+  const max = field.maxItems ?? 4;
+  const [rows, setRows] = useState(() => (value?.length ? value : [""]));
+  const update = (next) => {
+    setRows(next);
+    onChange(next.map((n) => n.trim()).filter(Boolean));
+  };
+  return (
+    <div className="space-y-2">
+      {rows.map((name, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <Input
+            id={i === 0 ? inputId(field.path) : undefined}
+            value={name}
+            maxLength={field.itemMaxLength}
+            placeholder={`Partner ${i + 1} full name`}
+            aria-label={`Partner ${i + 1} name`}
+            aria-invalid={invalid || undefined}
+            onChange={(e) => update(rows.map((r, j) => (j === i ? e.target.value : r)))}
+          />
+          {rows.length > 1 ? (
+            <button
+              type="button"
+              onClick={() => update(rows.filter((_, j) => j !== i))}
+              className="rounded-md p-2 text-muted-foreground hover:bg-gray-100"
+              aria-label={`Remove partner ${i + 1}`}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+      ))}
+      {rows.length < max ? (
+        <button
+          type="button"
+          onClick={() => update([...rows, ""])}
+          className="text-sm font-semibold text-brand-orange hover:underline"
+        >
+          + Add partner
+        </button>
+      ) : (
+        <p className="text-xs text-muted-foreground">Up to {max} partners.</p>
+      )}
+    </div>
+  );
+}
+
 function CuisineEditor({ field, value, onChange }) {
   const [draft, setDraft] = useState("");
 
@@ -600,6 +649,7 @@ function seedForm({ restaurant, hours, delivery, spec, hoursConfig }) {
       compliance.map((f) => {
         const key = leaf(f.path);
         const raw = restaurant.settings?.[key];
+        if (f.type === "tags") return [key, Array.isArray(raw) ? raw : []];
         return [key, f.type === "date" ? toDateInput(raw) : f.type === "number" ? (raw == null ? "" : String(raw)) : raw ?? ""];
       }),
     ),
@@ -1145,12 +1195,23 @@ export default function StoreSettings() {
   // turned on for a store whose other licence details are already on file.
   const fieldLocked = (field, locked) =>
     locked &&
-    !(field.path === "settings.gstNumber" && form.gstRegistered && !savedSettings.gstNumber);
+    !(field.path === "settings.gstNumber" && form.gstRegistered && !savedSettings.gstNumber) &&
+    // A partnership saved before partner names existed can still add them, once.
+    !(field.path === "settings.partnerNames" && !(savedSettings.partnerNames ?? []).length);
+  // A field shown only while another holds a value (partner names → a partnership).
+  const fieldShown = (field) => !field.showWhen || getByPath(form, field.showWhen.path) === field.showWhen.equals;
   const renderSection = (name, { locked = false } = {}) =>
-    spec.section(name).map((field) => (
+    spec.section(name).filter(fieldShown).map((field) => (
       <div key={field.path} className={cn(field.wide && "sm:col-span-2")}>
         {fieldLocked(field, locked) ? (
-          <LockedField label={field.label} value={form.settings[leaf(field.path)]} />
+          <LockedField
+            label={field.label}
+            value={
+              Array.isArray(form.settings[leaf(field.path)])
+                ? form.settings[leaf(field.path)].join(", ")
+                : form.settings[leaf(field.path)]
+            }
+          />
         ) : (
           <Field
             label={field.label}
@@ -1159,7 +1220,14 @@ export default function StoreSettings() {
             error={errorFor(field.path)}
             help={field.help}
           >
-            {field.type === "select" ? (
+            {field.path === "settings.partnerNames" ? (
+              <PartnerNamesEditor
+                field={field}
+                value={form.settings.partnerNames}
+                onChange={(names) => setField(field.path, names)}
+                invalid={!!errorFor(field.path)}
+              />
+            ) : field.type === "select" ? (
               <SelectField
                 field={field}
                 value={form.settings[leaf(field.path)]}
